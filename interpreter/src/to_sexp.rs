@@ -103,7 +103,7 @@ impl ToSexp for State {
 impl ToSexp for ExeResult {
     fn to_sexp(&self) -> String {
         match self {
-            ExeResult::Ok => "ok".to_string(),
+            ExeResult::Ok(_) => "ok".to_string(),
             ExeResult::AssertErr => "\"assertion error\"".to_string(),
             ExeResult::OutOfBounds => "\"out of bounds\"".to_string(),
             ExeResult::NullPointer => "\"null pointer\"".to_string(),

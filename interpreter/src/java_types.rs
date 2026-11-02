@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum StackValue {
     Int(i32),
     Float(f32),

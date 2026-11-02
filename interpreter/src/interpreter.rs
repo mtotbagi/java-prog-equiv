@@ -17,28 +17,33 @@ impl Interpreter {
         method: &Method,
         input: (Vec<StackValue>, Heap),
         iter: u32,
-    ) -> (Vec<State>, ExeResult) {
+    ) -> (Vec<State>, Vec<z3::ast::Bool>, ExeResult) {
         let pc = ProgramCounter {
             class: self.class.name.clone(),
             method: method.id.clone(),
             idx: 0,
         };
         let mut state = State::new(pc.clone(), input.0, input.1);
+        let mut path = vec![];
         let mut states = vec![state.clone()];
         for _ in 0..iter {
-            let res = self.step(state);
-            state = match res {
-                Either::State(state) => {
-                    states.push(state.clone());
-                    state
+            let (outcome, constraint) = self.step(state);
+            if let Some(constraint) = constraint {
+                path.push(constraint);
+            }
+
+            match outcome {
+                Either::State(next_state) => {
+                    states.push(next_state.clone());
+                    state = next_state;
                 }
-                Either::Result(exe_result) => return (states, exe_result),
+                Either::Result(exe_result) => return (states, path, exe_result),
             }
         }
-        (states, ExeResult::DidNotFinish)
+        (states, path, ExeResult::DidNotFinish)
     }
 
-    fn step(&self, mut state: State) -> Either {
+    fn step(&self, mut state: State) -> (Either, Option<z3::ast::Bool>) {
         let Some(mut cur_frame) = state.frames.pop() else {
             panic!("Empty state!")
         };
@@ -55,7 +60,7 @@ impl Interpreter {
             Instruction::Load { ty, index } => cur_frame.load(*ty, *index),
             Instruction::Push { value } => cur_frame.push(*value),
             Instruction::Dup { words } => cur_frame.dup(*words),
-            Instruction::Throw => return Either::Result(AssertErr),
+            Instruction::Throw => return (Either::Result(AssertErr), None),
             Instruction::Ifz { cond, target } => {
                 let i = match cur_frame.stack.pop() {
                     Some(StackValue::Int(i)) => i as i64,
@@ -67,7 +72,11 @@ impl Interpreter {
                 if cond.cmp_with(i, 0) {
                     cur_frame.set_pc(*target);
                     state.frames.push(cur_frame);
-                    return Either::State(state);
+                    return (Either::State(state), Some(z3::ast::Bool::from_bool(true)));
+                } else {
+                    cur_frame.increment_pc();
+                    state.frames.push(cur_frame);
+                    return (Either::State(state), Some(z3::ast::Bool::from_bool(false)));
                 }
             }
             Instruction::Store { ty, index } => cur_frame.store(*ty, *index),
@@ -83,9 +92,14 @@ impl Interpreter {
                         assert!(*ty == value.get_type());
                         old_frame.push(value);
                     }
-                    return Either::State(state);
+                    return (Either::State(state), None);
                 } else {
-                    return Either::Result(Ok);
+                    if cur_frame.program_counter.method.ret_ty.is_some() {
+                        let value = cur_frame.stack.pop().expect("Stack shouldn't be empty!");
+                        return (Either::Result(Ok(Some(value))), None);
+                    } else {
+                        return (Either::Result(Ok(None)), None);
+                    }
                 }
             }
             Instruction::Get => {
@@ -139,7 +153,7 @@ impl Interpreter {
                     cur_frame.increment_pc();
                     state.frames.push(cur_frame);
                     state.frames.push(new_frame);
-                    return Either::State(state);
+                    return (Either::State(state), None);
                 }
             }
             Instruction::Binary { op, ty } => match ty {
@@ -153,7 +167,7 @@ impl Interpreter {
                     dbg!(lhs, rhs);
                     match op.op_int(lhs, rhs) {
                         Some(result) => cur_frame.stack.push(StackValue::Int(result)),
-                        None => return Either::Result(Div0),
+                        None => return (Either::Result(Div0), None),
                     }
                 }
                 StackType::Float => todo!(),
@@ -178,13 +192,17 @@ impl Interpreter {
                 if cond.cmp_with(lhs, rhs) {
                     cur_frame.set_pc(*target);
                     state.frames.push(cur_frame);
-                    return Either::State(state);
+                    return (Either::State(state), Some(z3::ast::Bool::from_bool(true)));
+                } else {
+                    cur_frame.increment_pc();
+                    state.frames.push(cur_frame);
+                    return (Either::State(state), Some(z3::ast::Bool::from_bool(false)));
                 }
             }
             Instruction::Goto { target } => {
                 cur_frame.set_pc(*target);
                 state.frames.push(cur_frame);
-                return Either::State(state);
+                return (Either::State(state), None);
             }
             Instruction::Placeholder => todo!(),
             Instruction::NewArray { dim, ty } => {
@@ -253,13 +271,13 @@ impl Interpreter {
                 };
 
                 let Some(arr) = arr_ref else {
-                    return Either::Result(NullPointer);
+                    return (Either::Result(NullPointer), None);
                 };
 
                 if let HeapValue::Array { ty: _, values } = &mut state.heap.heap[arr as usize] {
                     // TODO: check type
                     if idx as usize >= values.len() {
-                        return Either::Result(OutOfBounds);
+                        return (Either::Result(OutOfBounds), None);
                     }
 
                     values[idx as usize] = val.to_heap_value();
@@ -277,7 +295,7 @@ impl Interpreter {
                 };
 
                 let Some(arr) = arr_ref else {
-                    return Either::Result(NullPointer);
+                    return (Either::Result(NullPointer), None);
                 };
 
                 if let HeapValue::Array { values, .. } = &state.heap.heap[arr as usize] {
@@ -304,12 +322,12 @@ impl Interpreter {
                 };
 
                 let Some(arr) = arr_ref else {
-                    return Either::Result(NullPointer);
+                    return (Either::Result(NullPointer), None);
                 };
 
                 if let HeapValue::Array { values, .. } = &state.heap.heap[arr as usize] {
                     if idx as usize >= values.len() {
-                        return Either::Result(OutOfBounds);
+                        return (Either::Result(OutOfBounds), None);
                     }
 
                     cur_frame.push(values[idx as usize].to_stack_value());
@@ -339,6 +357,6 @@ impl Interpreter {
         }
         cur_frame.increment_pc();
         state.frames.push(cur_frame);
-        Either::State(state)
+        (Either::State(state), None)
     }
 }
