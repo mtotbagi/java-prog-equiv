@@ -16,12 +16,16 @@ fn main() {
     let class = Class::from_json(&json);
     let method = class
         .get_method(&methodname)
-        .unwrap_or_else(|| panic!("Method {} should be implemented on {}",
-            methodname, classname))
+        .unwrap_or_else(|| {
+            panic!(
+                "Method {} should be implemented on {}",
+                methodname, classname
+            )
+        })
         .clone();
     let input = parse_input(&method, input);
     let interpreter = Interpreter::new(class);
-    let (states, res) = interpreter.interpret(&method, input, iter);
+    let (states, _, res) = interpreter.interpret(&method, input, iter);
 
     println!("(init {} )", states[0].to_sexp());
     for i in 0..states.len() {

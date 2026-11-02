@@ -8,9 +8,9 @@ pub enum Either {
     Result(ExeResult),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ExeResult {
-    Ok,
+    Ok(Option<StackValue>),
     AssertErr,
     OutOfBounds,
     NullPointer,
