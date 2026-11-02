@@ -29,6 +29,7 @@ pub struct MethodId {
 }
 
 impl MethodId {
+    #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
         let mut res = self.name.clone();
         res += ":(";

@@ -297,7 +297,7 @@ impl FromJson for MethodId {
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(|json| SimpleType::from_json(json))
+                .map(SimpleType::from_json)
                 .collect()
         } else {
             json["params"]
