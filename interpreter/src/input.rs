@@ -27,7 +27,7 @@ pub fn parse_input(method: &Method, input: &str) -> (Vec<StackValue>, Heap) {
 
     let values = types
         .iter()
-        .zip(parts.into_iter())
+        .zip(parts)
         .map(|(t, part)| parse_input_value(t, part, &mut heap))
         .collect();
 

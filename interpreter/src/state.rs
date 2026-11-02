@@ -28,7 +28,7 @@ pub struct State {
 impl State {
     pub fn new(program_counter: ProgramCounter, input: Vec<StackValue>, heap: Heap) -> Self {
         Self {
-            heap: heap,
+            heap,
             frames: vec![Frame::new(program_counter, input)],
         }
     }
@@ -57,7 +57,7 @@ impl Frame {
     pub fn new(program_counter: ProgramCounter, locals: Vec<StackValue>) -> Self {
         Self {
             stack: vec![],
-            locals: locals.into_iter().map(|v| Some(v)).collect(),
+            locals: locals.into_iter().map(Some).collect(),
             program_counter,
         }
     }

@@ -16,10 +16,8 @@ fn main() {
     let class = Class::from_json(&json);
     let method = class
         .get_method(&methodname)
-        .expect(&format!(
-            "Method {} should be implemented on {}",
-            methodname, classname
-        ))
+        .unwrap_or_else(|| panic!("Method {} should be implemented on {}",
+            methodname, classname))
         .clone();
     let input = parse_input(&method, input);
     let interpreter = Interpreter::new(class);

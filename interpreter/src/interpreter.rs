@@ -103,7 +103,7 @@ impl Interpreter {
                 });
             }
             Instruction::Invoke {
-                access,
+                access: _,
                 method_id,
                 simple_ref,
             } => {
@@ -112,7 +112,7 @@ impl Interpreter {
                 // Or it's unhandled and we panic
                 let classname = match simple_ref {
                     SimpleRef::Class { name } => name,
-                    SimpleRef::Array { ty } => todo!(),
+                    SimpleRef::Array { ty: _ } => todo!(),
                 };
                 if self.class.name != *classname {
                     if classname == "java/lang/AssertionError" && method_id.name == "<init>" {
@@ -231,7 +231,7 @@ impl Interpreter {
                     values: arr,
                 });
             }
-            Instruction::ArrayStore { ty } => {
+            Instruction::ArrayStore { ty: _ } => {
                 let val = cur_frame
                     .stack
                     .pop()
@@ -256,7 +256,7 @@ impl Interpreter {
                     return Either::Result(NullPointer);
                 };
 
-                if let HeapValue::Array { ty, values } = &mut state.heap.heap[arr as usize] {
+                if let HeapValue::Array { ty: _, values } = &mut state.heap.heap[arr as usize] {
                     // TODO: check type
                     if idx as usize >= values.len() {
                         return Either::Result(OutOfBounds);
@@ -286,7 +286,7 @@ impl Interpreter {
                     panic!("Not array ref");
                 }
             }
-            Instruction::ArrayLoad { ty } => {
+            Instruction::ArrayLoad { ty: _ } => {
                 let StackValue::Int(idx) = cur_frame
                     .stack
                     .pop()
