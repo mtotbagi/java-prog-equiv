@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ -z "${IN_NIX_SHELL:-}" ]; then
+    exec nix --extra-experimental-features 'nix-command flakes' develop --command "$0" "$@"
+fi
+
+cargo clippy --workspace --all-targets -- -D warnings
+cargo machete
