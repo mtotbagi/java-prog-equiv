@@ -88,6 +88,16 @@ impl Op {
             Op::Rem => Some(lhs.wrapping_rem(rhs)),
         }
     }
+
+    pub fn op_z3(&self, lhs: &z3::ast::BV, rhs: &z3::ast::BV) -> z3::ast::BV {
+        match self {
+            Op::Add => lhs.bvadd(rhs),
+            Op::Sub => lhs.bvsub(rhs),
+            Op::Mul => lhs.bvmul(rhs),
+            Op::Div => lhs.bvsdiv(rhs),
+            Op::Rem => lhs.bvsrem(rhs),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -122,6 +132,19 @@ impl Cond {
             Cond::Ge => lhs >= rhs,
             Cond::Is => lhs == rhs,
             Cond::IsNot => lhs != rhs,
+        }
+    }
+
+    pub fn cmp_z3_signed(&self, lhs: &z3::ast::BV, rhs: &z3::ast::BV) -> z3::ast::Bool {
+        match self {
+            Cond::Ne => lhs.ne(rhs),
+            Cond::Eq => lhs.eq(rhs),
+            Cond::Lt => lhs.bvslt(rhs),
+            Cond::Le => lhs.bvsle(rhs),
+            Cond::Gt => lhs.bvsgt(rhs),
+            Cond::Ge => lhs.bvsge(rhs),
+            Cond::Is => lhs.eq(rhs),
+            Cond::IsNot => lhs.ne(rhs),
         }
     }
 }

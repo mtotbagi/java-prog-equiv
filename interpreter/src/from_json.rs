@@ -38,8 +38,11 @@ impl FromJson for StackValue {
             panic!("Invalid json {}", json)
         };
         match s.as_str() {
-            "int" => Self::Int(i32::from_json(&json["value"])),
-            "integer" => Self::Int(i32::from_json(&json["value"])),
+            "int" | "integer" => {
+                let val = i32::from_json(&json["value"]);
+                let ast = z3::ast::BV::from_i64(val as i64, 32);
+                Self::Int(val, ast)
+            }
             "float" => todo!(),
             "ref" => todo!(),
             _ => panic!("Invalid json {}", json),

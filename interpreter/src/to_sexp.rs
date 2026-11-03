@@ -8,7 +8,7 @@ impl ToSexp for StackValue {
     fn to_sexp(&self) -> String {
         let mut res = "(".to_string();
         match self {
-            StackValue::Int(i) => {
+            StackValue::Int(i, _) => {
                 res += "int ";
                 res += &i.to_string();
             }
