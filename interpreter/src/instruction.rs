@@ -88,6 +88,16 @@ impl Op {
             Op::Rem => Some(lhs.wrapping_rem(rhs)),
         }
     }
+
+    pub fn op_z3(&self, lhs: &z3::ast::BV, rhs: &z3::ast::BV) -> z3::ast::BV {
+        match self {
+            Op::Add => lhs.bvadd(rhs),
+            Op::Sub => lhs.bvsub(rhs),
+            Op::Mul => lhs.bvmul(rhs),
+            Op::Div => lhs.bvsdiv(rhs),
+            Op::Rem => lhs.bvsrem(rhs),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

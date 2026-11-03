@@ -105,7 +105,9 @@ impl Interpreter {
             }
             Instruction::Get => {
                 // TODO handle other cases than assertionsDisabled = false
-                cur_frame.stack.push(StackValue::Int(0, z3::ast::BV::from_i64(0, 32)));
+                cur_frame
+                    .stack
+                    .push(StackValue::Int(0, z3::ast::BV::from_i64(0, 32)));
                 dbg!(&cur_frame.stack);
             }
             Instruction::New { class } => {
@@ -159,18 +161,19 @@ impl Interpreter {
             }
             Instruction::Binary { op, ty } => match ty {
                 StackType::Int => {
-                    let Some(StackValue::Int(rhs, _rhs_bv)) = cur_frame.stack.pop() else {
+                    let Some(StackValue::Int(rhs, rhs_bv)) = cur_frame.stack.pop() else {
                         panic!()
                     };
-                    let Some(StackValue::Int(lhs, _lhs_bv)) = cur_frame.stack.pop() else {
+                    let Some(StackValue::Int(lhs, lhs_bv)) = cur_frame.stack.pop() else {
                         panic!()
                     };
                     dbg!(lhs, rhs);
                     match op.op_int(lhs, rhs) {
                         Some(result) => {
-                            // TODO: handle symbolic values
-                            cur_frame.stack.push(StackValue::Int(result, z3::ast::BV::fresh_const("int", 32)));
-                        },
+                            cur_frame
+                                .stack
+                                .push(StackValue::Int(result, op.op_z3(&lhs_bv, &rhs_bv)));
+                        }
                         None => return (Either::Result(Div0), None),
                     }
                 }
@@ -192,7 +195,7 @@ impl Interpreter {
                     Some(_) => panic!(),
                     None => panic!(),
                 };
-                
+
                 let sym_bool = match (lhs_bv, rhs_bv) {
                     (Some(lhs_bv), Some(rhs_bv)) => Some(cond.cmp_z3_signed(&lhs_bv, &rhs_bv)),
                     _ => None,
@@ -309,7 +312,10 @@ impl Interpreter {
 
                 if let HeapValue::Array { values, .. } = &state.heap.heap[arr as usize] {
                     // TODO change to symbolic length when adding symbolic arrays
-                    cur_frame.push(StackValue::Int(values.len() as i32, z3::ast::BV::fresh_const("int", 32)));
+                    cur_frame.push(StackValue::Int(
+                        values.len() as i32,
+                        z3::ast::BV::fresh_const("int", 32),
+                    ));
                 } else {
                     panic!("Not array ref");
                 }
@@ -347,10 +353,12 @@ impl Interpreter {
                 }
             }
             Instruction::Incr { index, amount } => {
-                let StackValue::Int(local, bv) = cur_frame.locals[*index as usize].clone().unwrap() else {
+                let StackValue::Int(local, bv) = cur_frame.locals[*index as usize].clone().unwrap()
+                else {
                     panic!("Local must be an int, local: {}", index);
                 };
-                cur_frame.locals[*index as usize] = Some(StackValue::Int(local + *amount, bv.bvadd(*amount)));
+                cur_frame.locals[*index as usize] =
+                    Some(StackValue::Int(local + *amount, bv.bvadd(*amount)));
             }
             Instruction::Neg { ty } => {
                 let Some(value) = cur_frame.stack.pop() else {
