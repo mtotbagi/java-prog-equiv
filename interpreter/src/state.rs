@@ -76,10 +76,10 @@ impl Frame {
 
     pub fn dup(&mut self, words: u32) {
         if words == 1 {
-            self.stack.push(self.stack[self.stack.len() - 1]);
+            self.stack.push(self.stack[self.stack.len() - 1].clone());
         } else if words == 2 {
-            self.stack.push(self.stack[self.stack.len() - 2]);
-            self.stack.push(self.stack[self.stack.len() - 2]);
+            self.stack.push(self.stack[self.stack.len() - 2].clone());
+            self.stack.push(self.stack[self.stack.len() - 2].clone());
         } else {
             panic!()
         }
@@ -90,7 +90,7 @@ impl Frame {
     }
 
     pub(crate) fn load(&mut self, ty: StackType, index: u32) {
-        let local = self.locals[index as usize].unwrap();
+        let local = self.locals[index as usize].clone().unwrap();
         assert!(local.get_type() == ty);
 
         self.stack.push(local);

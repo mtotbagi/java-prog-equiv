@@ -78,6 +78,7 @@ fn parse_primitive_heap(ty: &SimpleType, input: &str) -> HeapValue {
             input
                 .parse()
                 .unwrap_or_else(|_| panic!("invalid int literal `{input}`")),
+            z3::ast::BV::fresh_const("int", 32)
         ),
         SimpleType::Float => HeapValue::Float(
             input
@@ -88,18 +89,20 @@ fn parse_primitive_heap(ty: &SimpleType, input: &str) -> HeapValue {
             input
                 .parse()
                 .unwrap_or_else(|_| panic!("invalid byte literal `{input}`")),
+            z3::ast::BV::fresh_const("byte", 8)
         ),
         SimpleType::Short => HeapValue::Short(
             input
                 .parse()
                 .unwrap_or_else(|_| panic!("invalid short literal `{input}`")),
+            z3::ast::BV::fresh_const("short", 16)
         ),
-        SimpleType::Char => HeapValue::Char(parse_char_literal(input)),
+        SimpleType::Char => HeapValue::Char(parse_char_literal(input), z3::ast::BV::fresh_const("char", 16)),
         SimpleType::Boolean => {
             let b: bool = input
                 .parse()
                 .unwrap_or_else(|_| panic!("invalid bool literal `{input}`"));
-            HeapValue::Int(b as i32)
+            HeapValue::Int(b as i32, z3::ast::BV::fresh_const("bool", 1).zero_ext(31))
         }
         SimpleType::SimpleRef(_) => unreachable!("references are not primitives"),
     }
@@ -164,7 +167,7 @@ fn parse_string(input: &str, heap: &mut Heap) -> StackValue {
         .and_then(|s| s.strip_suffix('\''))
         .unwrap_or_else(|| panic!("invalid string literal `{input}`, expected `s'...'`"));
 
-    let chars: Vec<HeapValue> = content.encode_utf16().map(HeapValue::Char).collect();
+    let chars: Vec<HeapValue> = content.encode_utf16().map(|c| HeapValue::Char(c, z3::ast::BV::fresh_const("char", 16))).collect();
 
     let mut fields = HashMap::new();
     fields.insert(
