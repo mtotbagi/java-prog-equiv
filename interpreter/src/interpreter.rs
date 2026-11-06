@@ -174,8 +174,11 @@ impl Interpreter {
                             cur_frame
                                 .stack
                                 .push(StackValue::Int(result, op.op_z3(&lhs_bv, &rhs_bv)));
+                            cur_frame.increment_pc();
+                            state.frames.push(cur_frame);
+                            return (Either::State(state), Some(rhs_bv.ne(0)));
                         }
-                        None => return (Either::Result(Div0), None),
+                        None => return (Either::Result(Div0), Some(rhs_bv.eq(0))),
                     }
                 }
                 StackType::Float => todo!(),
