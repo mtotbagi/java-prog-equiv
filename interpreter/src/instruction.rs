@@ -122,7 +122,7 @@ pub enum Cond {
 }
 
 impl Cond {
-    pub fn cmp_with(&self, lhs: i64, rhs: i64) -> bool {
+    pub fn cmp_i32(&self, lhs: i32, rhs: i32) -> bool {
         match self {
             Cond::Ne => lhs != rhs,
             Cond::Eq => lhs == rhs,
@@ -132,6 +132,14 @@ impl Cond {
             Cond::Ge => lhs >= rhs,
             Cond::Is => lhs == rhs,
             Cond::IsNot => lhs != rhs,
+        }
+    }
+
+    pub fn cmp_ref(&self, lhs: Option<u32>, rhs: Option<u32>) -> bool {
+        match self {
+            Cond::Is => lhs == rhs,
+            Cond::IsNot => lhs != rhs,
+            _ => panic!("Invalid condition for references!"),
         }
     }
 

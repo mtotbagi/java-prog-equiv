@@ -62,15 +62,16 @@ impl Interpreter {
             Instruction::Dup { words } => cur_frame.dup(*words),
             Instruction::Throw => return (Either::Result(AssertErr), None),
             Instruction::Ifz { cond, target } => {
-                let (i, bv) = match cur_frame.stack.pop() {
-                    Some(StackValue::Int(i, bv)) => (i as i64, Some(bv)),
-                    Some(StackValue::Ref(Some(i))) => (i as i64, None),
-                    Some(StackValue::Ref(None)) => (0, None),
+                let (real_bool, sym_bool) = match cur_frame.stack.pop() {
+                    Some(StackValue::Int(i, bv)) => (
+                        cond.cmp_i32(i, 0),
+                        Some(cond.cmp_z3_signed(&bv, &z3::ast::BV::from_i64(0, 32))),
+                    ),
+                    Some(StackValue::Ref(r)) => (cond.cmp_ref(r, None), None),
                     Some(_) => panic!(),
                     None => panic!(),
                 };
-                let sym_bool = bv.map(|bv| cond.cmp_z3_signed(&bv, &z3::ast::BV::from_i64(0, 32)));
-                if cond.cmp_with(i, 0) {
+                if real_bool {
                     cur_frame.set_pc(*target);
                     state.frames.push(cur_frame);
                     return (Either::State(state), sym_bool);
@@ -181,26 +182,19 @@ impl Interpreter {
                 StackType::Ref => panic!("Cannot use ref for arithmetic operations!"),
             },
             Instruction::If { cond, target } => {
-                let (rhs, rhs_bv) = match cur_frame.stack.pop() {
-                    Some(StackValue::Int(i, bv)) => (i as i64, Some(bv)),
-                    Some(StackValue::Ref(Some(i))) => (i as i64, None),
-                    Some(StackValue::Ref(None)) => (-1, None),
-                    Some(_) => panic!(),
-                    None => panic!(),
-                };
-                let (lhs, lhs_bv) = match cur_frame.stack.pop() {
-                    Some(StackValue::Int(i, bv)) => (i as i64, Some(bv)),
-                    Some(StackValue::Ref(Some(i))) => (i as i64, None),
-                    Some(StackValue::Ref(None)) => (-1, None),
-                    Some(_) => panic!(),
-                    None => panic!(),
+                let rhs = cur_frame.stack.pop().unwrap();
+                let lhs = cur_frame.stack.pop().unwrap();
+                let (real_bool, sym_bool) = match (lhs, rhs) {
+                    (StackValue::Int(lhs, lhs_bv), StackValue::Int(rhs, rhs_bv)) => (
+                        cond.cmp_i32(lhs, rhs),
+                        Some(cond.cmp_z3_signed(&lhs_bv, &rhs_bv)),
+                    ),
+                    (StackValue::Ref(lhs), StackValue::Ref(rhs)) => (cond.cmp_ref(lhs, rhs), None),
+                    (StackValue::Float(_), StackValue::Float(_)) => todo!(),
+                    _ => panic!("Cannot compare different types"),
                 };
 
-                let sym_bool = match (lhs_bv, rhs_bv) {
-                    (Some(lhs_bv), Some(rhs_bv)) => Some(cond.cmp_z3_signed(&lhs_bv, &rhs_bv)),
-                    _ => None,
-                };
-                if cond.cmp_with(lhs, rhs) {
+                if real_bool {
                     cur_frame.set_pc(*target);
                     state.frames.push(cur_frame);
                     return (Either::State(state), sym_bool);

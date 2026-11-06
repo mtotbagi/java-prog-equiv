@@ -20,14 +20,25 @@ impl StackValue {
         match self {
             StackValue::Int(i, bv) => HeapValue::Int(*i, bv.clone()),
             StackValue::Float(f) => HeapValue::Float(*f),
-            StackValue::Ref(_) => panic!("Ref can't be turned into a heap value"),
+            StackValue::Ref(r) => HeapValue::Ref(*r),
         }
     }
 }
 
 #[derive(Clone, Debug)]
+pub enum ArrayValue {
+    Int(i32, z3::ast::BV),
+    Float(f32),
+    Ref(Option<u32>),
+    Byte(u8, z3::ast::BV),
+    Char(u16, z3::ast::BV),
+    Short(i16, z3::ast::BV),
+}
+
+#[derive(Clone, Debug)]
 pub enum HeapValue {
     Int(i32, z3::ast::BV),
+    Ref(Option<u32>),
     Float(f32),
     Byte(u8, z3::ast::BV),
     Char(u16, z3::ast::BV),
@@ -50,6 +61,7 @@ impl HeapValue {
             HeapValue::Byte(b, bv) => StackValue::Int(*b as i32, bv.zero_ext(24)),
             HeapValue::Short(s, bv) => StackValue::Int(*s as i32, bv.sign_ext(16)),
             HeapValue::Char(c, bv) => StackValue::Int(*c as i32, bv.zero_ext(16)),
+            HeapValue::Ref(r) => StackValue::Ref(*r),
             _ => panic!("Can't convert to StackValue"),
         }
     }
