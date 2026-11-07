@@ -16,3 +16,5 @@ mod interpreter;
 pub use interpreter::*;
 mod util;
 pub use util::*;
+mod concolic_exec;
+pub use concolic_exec::*;
