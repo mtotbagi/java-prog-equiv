@@ -70,9 +70,9 @@ impl FromJson for SimpleType {
         if let Value::String(kind) = &json["kind"] {
             match kind.as_str() {
                 "array" => {
-                    return SimpleType::SimpleRef(Box::new(SimpleRef::Array {
-                        ty: SimpleType::from_json(&json["type"]),
-                    }));
+                    return SimpleType::SimpleRef(SimpleRef::Array {
+                        ty: SimpleType::from_json(&json["type"]).to_array_type(),
+                    });
                 }
                 _ => todo!(),
             }
@@ -103,9 +103,9 @@ impl FromJson for Option<SimpleType> {
         if let Value::String(kind) = &json["kind"] {
             match kind.as_str() {
                 "array" => {
-                    return Some(SimpleType::SimpleRef(Box::new(SimpleRef::Array {
-                        ty: SimpleType::from_json(&json["type"]),
-                    })));
+                    return Some(SimpleType::SimpleRef(SimpleRef::Array {
+                        ty: SimpleType::from_json(&json["type"]).to_array_type(),
+                    }));
                 }
                 _ => todo!(),
             }
@@ -208,14 +208,14 @@ impl FromJson for Instruction {
             },
             "newarray" => Self::NewArray {
                 dim: u32::from_json(&json["dim"]),
-                ty: SimpleType::from_json(&json["type"]),
+                ty: SimpleType::from_json(&json["type"]).to_array_type(),
             },
             "array_store" => Self::ArrayStore {
-                ty: SimpleType::from_json(&json["type"]),
+                ty: SimpleType::from_json(&json["type"]).to_array_type(),
             },
             "arraylength" => Self::ArrayLength,
             "array_load" => Self::ArrayLoad {
-                ty: SimpleType::from_json(&json["type"]),
+                ty: SimpleType::from_json(&json["type"]).to_array_type(),
             },
             "incr" => Self::Incr {
                 index: u32::from_json(&json["index"]),

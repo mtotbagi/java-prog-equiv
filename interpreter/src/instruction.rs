@@ -1,6 +1,7 @@
 use crate::{
+    ArrayType,
     java_class::MethodId,
-    java_types::{SimpleRef, SimpleType, StackType, StackValue},
+    java_types::{SimpleRef, StackType, StackValue},
 };
 
 #[derive(Clone, Debug)]
@@ -53,14 +54,14 @@ pub enum Instruction {
     Placeholder,
     NewArray {
         dim: u32,
-        ty: SimpleType,
+        ty: ArrayType,
     },
     ArrayStore {
-        ty: SimpleType, // Technically JArrayType
+        ty: ArrayType,
     },
     ArrayLength,
     ArrayLoad {
-        ty: SimpleType, // Technically JArrayType
+        ty: ArrayType,
     },
     Incr {
         index: u32,

@@ -230,30 +230,29 @@ impl Interpreter {
 
                 // 0 as default
                 let arr = match ty {
-                    SimpleType::Int => {
-                        vec![HeapValue::Int(0, z3::ast::BV::from_i64(0, 32)); len]
+                    ArrayType::Int => {
+                        vec![ArrayValue::Int(0, z3::ast::BV::from_i64(0, 32)); len]
                     }
-                    SimpleType::Float => {
-                        vec![HeapValue::Float(0.0); len]
+                    ArrayType::Float => {
+                        vec![ArrayValue::Float(0.0); len]
                     }
-                    SimpleType::Byte => {
-                        vec![HeapValue::Byte(0, z3::ast::BV::from_i64(0, 8)); len]
+                    ArrayType::Byte => {
+                        vec![ArrayValue::Byte(0, z3::ast::BV::from_i64(0, 8)); len]
                     }
-                    SimpleType::Char => {
-                        vec![HeapValue::Char(0, z3::ast::BV::from_i64(0, 16)); len]
+                    ArrayType::Char => {
+                        vec![ArrayValue::Char(0, z3::ast::BV::from_i64(0, 16)); len]
                     }
-                    SimpleType::Short => {
-                        vec![HeapValue::Short(0, z3::ast::BV::from_i64(0, 16)); len]
+                    ArrayType::Short => {
+                        vec![ArrayValue::Short(0, z3::ast::BV::from_i64(0, 16)); len]
                     }
-                    SimpleType::Boolean => todo!(),
-                    SimpleType::SimpleRef(_) => todo!(),
+                    ArrayType::Boolean => todo!(),
                 };
 
                 cur_frame
                     .stack
                     .push(StackValue::Ref(Some(state.heap.heap.len() as u32)));
                 state.heap.heap.push(HeapValue::Array {
-                    ty: ty.clone(),
+                    ty: *ty,
                     values: arr,
                 });
             }
@@ -283,13 +282,13 @@ impl Interpreter {
                     return (Either::Result(NullPointer), None);
                 };
 
-                if let HeapValue::Array { ty: _, values } = &mut state.heap.heap[arr as usize] {
+                if let HeapValue::Array { ty, values } = &mut state.heap.heap[arr as usize] {
                     // TODO: check type
                     if idx as usize >= values.len() {
                         return (Either::Result(OutOfBounds), None);
                     }
 
-                    values[idx as usize] = val.to_heap_value();
+                    values[idx as usize] = val.to_array_value(*ty);
                 } else {
                     panic!("Not array ref");
                 }
