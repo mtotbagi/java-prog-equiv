@@ -1,4 +1,5 @@
 use crate::{
+    Array, ArrayType, ArrayValue,
     java_class::Method,
     java_types::{HeapValue, SimpleRef, SimpleType, StackValue},
     state::Heap,
@@ -66,48 +67,47 @@ fn split_top_level(s: &str) -> Vec<&str> {
 fn parse_input_value(ty: &SimpleType, input: &str, heap: &mut Heap) -> StackValue {
     match ty {
         SimpleType::SimpleRef(r) => parse_ref_value(r, input, heap),
-        _ => parse_primitive_heap(ty, input).to_stack_value(),
+        _ => parse_array_value(&ty.to_array_type(), input).to_stack_value(),
     }
 }
 
 /// Parses a *primitive* literal directly into a HeapValue (so array elements
 /// keep their proper variant, e.g. Char instead of being widened to Int).
-fn parse_primitive_heap(ty: &SimpleType, input: &str) -> HeapValue {
+fn parse_array_value(ty: &ArrayType, input: &str) -> ArrayValue {
     match ty {
-        SimpleType::Int => HeapValue::Int(
+        ArrayType::Int => ArrayValue::Int(
             input
                 .parse()
                 .unwrap_or_else(|_| panic!("invalid int literal `{input}`")),
             z3::ast::BV::fresh_const("int", 32),
         ),
-        SimpleType::Float => HeapValue::Float(
+        ArrayType::Float => ArrayValue::Float(
             input
                 .parse()
                 .unwrap_or_else(|_| panic!("invalid float literal `{input}`")),
         ),
-        SimpleType::Byte => HeapValue::Byte(
+        ArrayType::Byte => ArrayValue::Byte(
             input
                 .parse()
                 .unwrap_or_else(|_| panic!("invalid byte literal `{input}`")),
             z3::ast::BV::fresh_const("byte", 8),
         ),
-        SimpleType::Short => HeapValue::Short(
+        ArrayType::Short => ArrayValue::Short(
             input
                 .parse()
                 .unwrap_or_else(|_| panic!("invalid short literal `{input}`")),
             z3::ast::BV::fresh_const("short", 16),
         ),
-        SimpleType::Char => HeapValue::Char(
+        ArrayType::Char => ArrayValue::Char(
             parse_char_literal(input),
             z3::ast::BV::fresh_const("char", 16),
         ),
-        SimpleType::Boolean => {
+        ArrayType::Boolean => {
             let b: bool = input
                 .parse()
                 .unwrap_or_else(|_| panic!("invalid bool literal `{input}`"));
-            HeapValue::Int(b as i32, z3::ast::BV::fresh_const("bool", 1).zero_ext(31))
+            ArrayValue::Boolean(b, z3::ast::BV::fresh_const("bool", 1))
         }
-        SimpleType::SimpleRef(_) => unreachable!("references are not primitives"),
     }
 }
 
@@ -130,7 +130,7 @@ fn parse_ref_value(simple_ref: &SimpleRef, input: &str, heap: &mut Heap) -> Stac
 }
 
 /// Parses `[I:1, 2, 3]`, `[C:'h', 'e']`, `[I:]`, etc.
-fn parse_array(ty: &SimpleType, input: &str, heap: &mut Heap) -> StackValue {
+fn parse_array(ty: &ArrayType, input: &str, heap: &mut Heap) -> StackValue {
     let stripped = input
         .strip_prefix('[')
         .and_then(|s| s.strip_suffix(']'))
@@ -140,26 +140,23 @@ fn parse_array(ty: &SimpleType, input: &str, heap: &mut Heap) -> StackValue {
         .split_once(':')
         .unwrap_or_else(|| panic!("invalid array literal `{input}`, missing `:`"));
 
-    let values: Vec<HeapValue> = split_top_level(rest)
+    let values: Vec<ArrayValue> = split_top_level(rest)
         .into_iter()
         .map(|elem| parse_element_heap_value(ty, elem))
         .collect();
 
     let idx = heap.heap.len() as u32;
-    heap.heap.push(HeapValue::Array {
-        ty: ty.clone(),
-        values,
-    });
-    StackValue::Ref(Some(idx))
+    heap.heap
+        .push(HeapValue::Array(Array::from_values(*ty, values)));
+    StackValue::Ref(
+        Some(idx),
+        z3::ast::Bool::from_bool(true),
+        z3::ast::BV::from_u64(idx as u64, 32),
+    )
 }
 
-fn parse_element_heap_value(ty: &SimpleType, input: &str) -> HeapValue {
-    match ty {
-        SimpleType::SimpleRef(_) => {
-            unimplemented!("nested reference-typed array elements aren't supported yet")
-        }
-        _ => parse_primitive_heap(ty, input),
-    }
+fn parse_element_heap_value(ty: &ArrayType, input: &str) -> ArrayValue {
+    parse_array_value(ty, input)
 }
 
 /// Parses `s'hello'` into a heap-allocated `java/lang/String` object
@@ -170,18 +167,15 @@ fn parse_string(input: &str, heap: &mut Heap) -> StackValue {
         .and_then(|s| s.strip_suffix('\''))
         .unwrap_or_else(|| panic!("invalid string literal `{input}`, expected `s'...'`"));
 
-    let chars: Vec<HeapValue> = content
+    let chars: Vec<ArrayValue> = content
         .encode_utf16()
-        .map(|c| HeapValue::Char(c, z3::ast::BV::fresh_const("char", 16)))
+        .map(|c| ArrayValue::Char(c, z3::ast::BV::fresh_const("char", 16)))
         .collect();
 
     let mut fields = HashMap::new();
     fields.insert(
         "value".to_string(),
-        HeapValue::Array {
-            ty: SimpleType::Char,
-            values: chars,
-        },
+        HeapValue::Array(Array::from_values(ArrayType::Char, chars)),
     );
 
     let idx = heap.heap.len() as u32;
@@ -189,5 +183,9 @@ fn parse_string(input: &str, heap: &mut Heap) -> StackValue {
         name: "java/lang/String".to_string(),
         fields,
     });
-    StackValue::Ref(Some(idx))
+    StackValue::Ref(
+        Some(idx),
+        z3::ast::Bool::from_bool(true),
+        z3::ast::BV::from_u64(idx as u64, 32),
+    )
 }

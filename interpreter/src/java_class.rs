@@ -52,9 +52,11 @@ impl MethodId {
             SimpleType::Char => "C".to_string(),
             SimpleType::Short => todo!(),
             SimpleType::Boolean => "Z".to_string(),
-            SimpleType::SimpleRef(r) => match r.as_ref() {
+            SimpleType::SimpleRef(r) => match r {
                 SimpleRef::Class { name: _ } => todo!(),
-                SimpleRef::Array { ty } => "[".to_string() + &MethodId::param_to_string(ty),
+                SimpleRef::Array { ty } => {
+                    "[".to_string() + &MethodId::param_to_string(&ty.to_simple_type())
+                }
             },
         }
     }
