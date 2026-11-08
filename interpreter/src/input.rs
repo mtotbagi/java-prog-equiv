@@ -146,11 +146,12 @@ fn parse_array(ty: &ArrayType, input: &str, heap: &mut Heap) -> StackValue {
         .collect();
 
     let idx = heap.heap.len() as u32;
-    heap.heap.push(HeapValue::Array {
-        ty: *ty,
-        values,
-    });
-    StackValue::Ref(Some(idx))
+    heap.heap.push(HeapValue::Array { ty: *ty, values });
+    StackValue::Ref(
+        Some(idx),
+        z3::ast::Bool::from_bool(true),
+        z3::ast::BV::from_u64(idx as u64, 32),
+    )
 }
 
 fn parse_element_heap_value(ty: &ArrayType, input: &str) -> ArrayValue {
@@ -184,5 +185,9 @@ fn parse_string(input: &str, heap: &mut Heap) -> StackValue {
         name: "java/lang/String".to_string(),
         fields,
     });
-    StackValue::Ref(Some(idx))
+    StackValue::Ref(
+        Some(idx),
+        z3::ast::Bool::from_bool(true),
+        z3::ast::BV::from_u64(idx as u64, 32),
+    )
 }

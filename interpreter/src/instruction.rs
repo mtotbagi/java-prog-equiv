@@ -144,6 +144,23 @@ impl Cond {
         }
     }
 
+    pub fn cmp_z3_ref(
+        &self,
+        lhs: (&z3::ast::Bool, &z3::ast::BV),
+        rhs: (&z3::ast::Bool, &z3::ast::BV),
+    ) -> z3::ast::Bool {
+        match self {
+            Cond::Is => z3::ast::Bool::and(&[
+                lhs.0.eq(rhs.0),
+                lhs.0
+                    .eq(z3::ast::Bool::from_bool(true))
+                    .implies(lhs.1.eq(rhs.1)),
+            ]),
+            Cond::IsNot => Cond::Is.cmp_z3_ref(lhs, rhs).not(),
+            _ => panic!("Invalid condition"),
+        }
+    }
+
     pub fn cmp_z3_signed(&self, lhs: &z3::ast::BV, rhs: &z3::ast::BV) -> z3::ast::Bool {
         match self {
             Cond::Ne => lhs.ne(rhs),

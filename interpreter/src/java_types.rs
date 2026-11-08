@@ -4,7 +4,8 @@ use std::collections::HashMap;
 pub enum StackValue {
     Int(i32, z3::ast::BV),
     Float(f32),
-    Ref(Option<u32>),
+    // The symbolic bool true iff ref is Some
+    Ref(Option<u32>, z3::ast::Bool, z3::ast::BV),
 }
 
 impl StackValue {
@@ -12,7 +13,7 @@ impl StackValue {
         match self {
             StackValue::Int(_, _) => StackType::Int,
             StackValue::Float(_) => StackType::Float,
-            StackValue::Ref(_) => StackType::Ref,
+            StackValue::Ref(_, _, _) => StackType::Ref,
         }
     }
 
@@ -63,7 +64,7 @@ impl ArrayValue {
 #[derive(Clone, Debug)]
 pub enum HeapValue {
     Int(i32, z3::ast::BV),
-    Ref(Option<u32>),
+    Ref(Option<u32>, z3::ast::Bool, z3::ast::BV),
     Float(f32),
     Byte(u8, z3::ast::BV),
     Char(u16, z3::ast::BV),
@@ -87,9 +88,16 @@ impl HeapValue {
             HeapValue::Byte(b, bv) => StackValue::Int(*b as i32, bv.zero_ext(24)),
             HeapValue::Short(s, bv) => StackValue::Int(*s as i32, bv.sign_ext(16)),
             HeapValue::Char(c, bv) => StackValue::Int(*c as i32, bv.zero_ext(16)),
-            HeapValue::Ref(r) => StackValue::Ref(*r),
+            HeapValue::Ref(r, sym_is_null, sym_bv) => {
+                StackValue::Ref(*r, sym_is_null.clone(), sym_bv.clone())
+            }
             _ => panic!("Can't convert to StackValue"),
         }
+    }
+
+    pub fn symbolic_values(&self) -> Vec<z3::ast::Dynamic> {
+        // Important: deterministic order!!!
+        todo!()
     }
 }
 

@@ -31,7 +31,11 @@ impl FromJson for i32 {
 impl FromJson for StackValue {
     fn from_json(json: &Value) -> Self {
         if json.is_null() {
-            return Self::Ref(None);
+            return Self::Ref(
+                None,
+                z3::ast::Bool::from_bool(false),
+                z3::ast::BV::from_u64(0, 32),
+            );
         }
 
         let Value::String(s) = &json["type"] else {

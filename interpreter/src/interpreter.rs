@@ -67,7 +67,16 @@ impl Interpreter {
                         cond.cmp_i32(i, 0),
                         Some(cond.cmp_z3_signed(&bv, &z3::ast::BV::from_i64(0, 32))),
                     ),
-                    Some(StackValue::Ref(r)) => (cond.cmp_ref(r, None), None),
+                    Some(StackValue::Ref(r, sym_is_null, sym_bv)) => (
+                        cond.cmp_ref(r, None),
+                        Some(cond.cmp_z3_ref(
+                            (&sym_is_null, &sym_bv),
+                            (
+                                &z3::ast::Bool::from_bool(false),
+                                &z3::ast::BV::from_u64(0, 32),
+                            ),
+                        )),
+                    ),
                     Some(_) => panic!(),
                     None => panic!(),
                 };
@@ -112,9 +121,12 @@ impl Interpreter {
                 dbg!(&cur_frame.stack);
             }
             Instruction::New { class } => {
-                cur_frame
-                    .stack
-                    .push(StackValue::Ref(Some(state.heap.heap.len() as u32)));
+                let idx = state.heap.heap.len();
+                cur_frame.stack.push(StackValue::Ref(
+                    Some(idx as u32),
+                    z3_true(),
+                    z3::ast::BV::from_u64(idx as u64, 32),
+                ));
                 state.heap.heap.push(HeapValue::Object {
                     name: class.clone(),
                     fields: HashMap::new(),
@@ -192,7 +204,13 @@ impl Interpreter {
                         cond.cmp_i32(lhs, rhs),
                         Some(cond.cmp_z3_signed(&lhs_bv, &rhs_bv)),
                     ),
-                    (StackValue::Ref(lhs), StackValue::Ref(rhs)) => (cond.cmp_ref(lhs, rhs), None),
+                    (
+                        StackValue::Ref(lhs, lhs_is_null, lhs_bv),
+                        StackValue::Ref(rhs, rhs_is_null, rhs_bv),
+                    ) => (
+                        cond.cmp_ref(lhs, rhs),
+                        Some(cond.cmp_z3_ref((&lhs_is_null, &lhs_bv), (&rhs_is_null, &rhs_bv))),
+                    ),
                     (StackValue::Float(_), StackValue::Float(_)) => todo!(),
                     _ => panic!("Cannot compare different types"),
                 };
@@ -248,9 +266,12 @@ impl Interpreter {
                     ArrayType::Boolean => todo!(),
                 };
 
-                cur_frame
-                    .stack
-                    .push(StackValue::Ref(Some(state.heap.heap.len() as u32)));
+                let idx = state.heap.heap.len();
+                cur_frame.stack.push(StackValue::Ref(
+                    Some(idx as u32),
+                    z3_true(),
+                    z3::ast::BV::from_u64(idx as u64, 32),
+                ));
                 state.heap.heap.push(HeapValue::Array {
                     ty: *ty,
                     values: arr,
@@ -270,7 +291,7 @@ impl Interpreter {
                     panic!("Expected an Int");
                 };
 
-                let StackValue::Ref(arr_ref) = cur_frame
+                let StackValue::Ref(arr_ref, sym_is_valid, _) = cur_frame
                     .stack
                     .pop()
                     .expect("[ArraySotre]: arrayref not on stack")
@@ -279,22 +300,35 @@ impl Interpreter {
                 };
 
                 let Some(arr) = arr_ref else {
-                    return (Either::Result(NullPointer), None);
+                    return (
+                        Either::Result(NullPointer),
+                        Some(sym_is_valid.eq(z3_false())),
+                    );
                 };
 
                 if let HeapValue::Array { ty, values } = &mut state.heap.heap[arr as usize] {
                     // TODO: check type
                     if idx as usize >= values.len() {
-                        return (Either::Result(OutOfBounds), None);
+                        return (
+                            Either::Result(OutOfBounds),
+                            Some(z3::ast::Bool::and(&[sym_is_valid.eq(z3_true())])),
+                        );
                     }
 
                     values[idx as usize] = val.to_array_value(*ty);
                 } else {
                     panic!("Not array ref");
                 }
+
+                cur_frame.increment_pc();
+                state.frames.push(cur_frame);
+                return (
+                    Either::State(state),
+                    Some(z3::ast::Bool::and(&[sym_is_valid.eq(z3_true())])),
+                );
             }
             Instruction::ArrayLength => {
-                let StackValue::Ref(arr_ref) = cur_frame
+                let StackValue::Ref(arr_ref, sym_is_valid, _) = cur_frame
                     .stack
                     .pop()
                     .expect("[ArraySotre]: arrayref not on stack")
@@ -303,7 +337,10 @@ impl Interpreter {
                 };
 
                 let Some(arr) = arr_ref else {
-                    return (Either::Result(NullPointer), None);
+                    return (
+                        Either::Result(NullPointer),
+                        Some(sym_is_valid.eq(z3_false())),
+                    );
                 };
 
                 if let HeapValue::Array { values, .. } = &state.heap.heap[arr as usize] {
@@ -315,6 +352,10 @@ impl Interpreter {
                 } else {
                     panic!("Not array ref");
                 }
+
+                cur_frame.increment_pc();
+                state.frames.push(cur_frame);
+                return (Either::State(state), Some(sym_is_valid.eq(z3_true())));
             }
             Instruction::ArrayLoad { ty: _ } => {
                 // TODO when adding symbolic arrays, use the idx_bv to get the symbolic value from the array
@@ -326,27 +367,39 @@ impl Interpreter {
                     panic!("Expected an Int");
                 };
 
-                let StackValue::Ref(arr_ref) = cur_frame
+                let StackValue::Ref(arr_ref, sym_is_valid, _) = cur_frame
                     .stack
                     .pop()
-                    .expect("[ArrayLoad]: arrayref not on stack")
+                    .expect("[ArraySotre]: arrayref not on stack")
                 else {
                     panic!("Expected a Ref");
                 };
 
                 let Some(arr) = arr_ref else {
-                    return (Either::Result(NullPointer), None);
+                    return (
+                        Either::Result(NullPointer),
+                        Some(sym_is_valid.eq(z3_false())),
+                    );
                 };
 
                 if let HeapValue::Array { values, .. } = &state.heap.heap[arr as usize] {
                     if idx as usize >= values.len() {
-                        return (Either::Result(OutOfBounds), None);
+                        return (
+                            Either::Result(OutOfBounds),
+                            Some(z3::ast::Bool::and(&[sym_is_valid.eq(z3_true())])),
+                        );
                     }
 
                     cur_frame.push(values[idx as usize].to_stack_value());
                 } else {
                     panic!("Not array ref");
                 }
+                cur_frame.increment_pc();
+                state.frames.push(cur_frame);
+                return (
+                    Either::State(state),
+                    Some(z3::ast::Bool::and(&[sym_is_valid.eq(z3_true())])),
+                );
             }
             Instruction::Incr { index, amount } => {
                 let StackValue::Int(local, bv) = cur_frame.locals[*index as usize].clone().unwrap()
@@ -364,7 +417,7 @@ impl Interpreter {
                 let res = match value {
                     StackValue::Int(v, bv) => StackValue::Int(-v, bv.bvneg()),
                     StackValue::Float(v) => StackValue::Float(-v),
-                    StackValue::Ref(_) => panic!(),
+                    StackValue::Ref(_, _, _) => panic!(),
                 };
                 cur_frame.push(res);
             }
