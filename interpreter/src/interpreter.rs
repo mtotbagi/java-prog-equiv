@@ -259,7 +259,7 @@ impl Interpreter {
                     .pop()
                     .expect("[ArraySotre]: value not on stack");
                 // TODO when adding symbolic arrays, use the val_bv to set the symbolic value in the array
-                let StackValue::Int(idx, _idx_bv) = cur_frame
+                let StackValue::Int(idx, idx_bv) = cur_frame
                     .stack
                     .pop()
                     .expect("[ArraySotre]: index not on stack")
@@ -274,35 +274,44 @@ impl Interpreter {
                 else {
                     panic!("Expected a Ref");
                 };
-
+                let is_null_pointer = sym_is_valid.eq(z3_false());
                 let Some(arr) = arr_ref else {
-                    return (
-                        Either::Result(NullPointer),
-                        Some(sym_is_valid.eq(z3_false())),
-                    );
+                    return (Either::Result(NullPointer), Some(is_null_pointer));
                 };
 
-                if let HeapValue::Array(Array { ty, values, .. }) =
-                    &mut state.heap.heap[arr as usize]
-                {
-                    // TODO: check type
-                    if idx as usize >= values.len() {
-                        return (
-                            Either::Result(OutOfBounds),
-                            Some(z3::ast::Bool::and(&[sym_is_valid.eq(z3_true())])),
-                        );
-                    }
-
-                    values[idx as usize] = val.to_array_value(*ty);
-                } else {
+                let HeapValue::Array(Array {
+                    ty,
+                    values,
+                    symbolic,
+                    len,
+                }) = &mut state.heap.heap[arr as usize]
+                else {
                     panic!("Not array ref");
+                };
+                let is_out_of_bounds = z3::ast::Bool::or(&[idx_bv.bvslt(0), idx_bv.bvsge(&*len)]);
+                // TODO: check type
+                if idx as usize >= values.len() {
+                    return (
+                        Either::Result(OutOfBounds),
+                        Some(z3::ast::Bool::and(&[
+                            is_null_pointer.not(),
+                            is_out_of_bounds,
+                        ])),
+                    );
                 }
+
+                let array_val = val.to_array_value(*ty);
+                *symbolic = symbolic.store(&idx_bv, &array_val.z3());
+                values[idx as usize] = array_val;
 
                 cur_frame.increment_pc();
                 state.frames.push(cur_frame);
                 return (
                     Either::State(state),
-                    Some(z3::ast::Bool::and(&[sym_is_valid.eq(z3_true())])),
+                    Some(z3::ast::Bool::and(&[
+                        is_null_pointer.not(),
+                        is_out_of_bounds.not(),
+                    ])),
                 );
             }
             Instruction::ArrayLength => {
@@ -337,7 +346,7 @@ impl Interpreter {
             }
             Instruction::ArrayLoad { ty: _ } => {
                 // TODO when adding symbolic arrays, use the idx_bv to get the symbolic value from the array
-                let StackValue::Int(idx, _) = cur_frame
+                let StackValue::Int(idx, idx_bv) = cur_frame
                     .stack
                     .pop()
                     .expect("[ArrayLoad]: index not on stack")
@@ -353,30 +362,38 @@ impl Interpreter {
                     panic!("Expected a Ref");
                 };
 
+                let is_null_pointer = sym_is_valid.eq(z3_false());
                 let Some(arr) = arr_ref else {
-                    return (
-                        Either::Result(NullPointer),
-                        Some(sym_is_valid.eq(z3_false())),
-                    );
+                    return (Either::Result(NullPointer), Some(is_null_pointer));
                 };
 
-                if let HeapValue::Array(Array { values, .. }) = &state.heap.heap[arr as usize] {
-                    if idx as usize >= values.len() {
-                        return (
-                            Either::Result(OutOfBounds),
-                            Some(z3::ast::Bool::and(&[sym_is_valid.eq(z3_true())])),
-                        );
-                    }
-
-                    cur_frame.push(values[idx as usize].to_stack_value());
-                } else {
+                let HeapValue::Array(Array {
+                    ty: _,
+                    values,
+                    symbolic,
+                    len,
+                }) = &mut state.heap.heap[arr as usize]
+                else {
                     panic!("Not array ref");
+                };
+                let is_out_of_bounds = z3::ast::Bool::or(&[idx_bv.bvslt(0), idx_bv.bvsge(&*len)]);
+
+                if idx as usize >= values.len() {
+                    return (
+                        Either::Result(OutOfBounds),
+                        Some(z3::ast::Bool::and(&[sym_is_valid.eq(z3_true())])),
+                    );
                 }
+                let sym_val = symbolic.select(&idx_bv);
+                cur_frame.push(values[idx as usize].swap_sym_val(sym_val).to_stack_value());
                 cur_frame.increment_pc();
                 state.frames.push(cur_frame);
                 return (
                     Either::State(state),
-                    Some(z3::ast::Bool::and(&[sym_is_valid.eq(z3_true())])),
+                    Some(z3::ast::Bool::and(&[
+                        is_null_pointer.not(),
+                        is_out_of_bounds.not(),
+                    ])),
                 );
             }
             Instruction::Incr { index, amount } => {

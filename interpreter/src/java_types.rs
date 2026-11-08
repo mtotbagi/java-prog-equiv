@@ -60,7 +60,7 @@ impl ArrayValue {
         }
     }
 
-    fn z3(&self) -> z3::ast::Dynamic {
+    pub fn z3(&self) -> z3::ast::Dynamic {
         match self {
             ArrayValue::Int(_, bv)
             | ArrayValue::Byte(_, bv)
@@ -68,6 +68,17 @@ impl ArrayValue {
             | ArrayValue::Short(_, bv)
             | ArrayValue::Boolean(_, bv) => z3::ast::Dynamic::from_ast(bv),
             ArrayValue::Float(_) => todo!(),
+        }
+    }
+
+    pub fn swap_sym_val(&self, sym_val: z3::ast::Dynamic) -> ArrayValue {
+        match self {
+            ArrayValue::Int(i, _) => ArrayValue::Int(*i, sym_val.as_bv().unwrap()),
+            ArrayValue::Float(f) => ArrayValue::Float(*f),
+            ArrayValue::Byte(b, _) => ArrayValue::Byte(*b, sym_val.as_bv().unwrap()),
+            ArrayValue::Char(c, _) => ArrayValue::Char(*c, sym_val.as_bv().unwrap()),
+            ArrayValue::Short(s, _) => ArrayValue::Short(*s, sym_val.as_bv().unwrap()),
+            ArrayValue::Boolean(b, _) => ArrayValue::Boolean(*b, sym_val.as_bv().unwrap()),
         }
     }
 }
