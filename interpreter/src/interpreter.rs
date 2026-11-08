@@ -240,31 +240,7 @@ impl Interpreter {
                     todo!("Only one dimensional arrays are supported currently!");
                 }
 
-                let len = if let StackValue::Int(x, _bv) = cur_frame.stack.pop().unwrap() {
-                    x as usize
-                } else {
-                    panic!("Invalid array length!")
-                };
-
-                // 0 as default
-                let arr = match ty {
-                    ArrayType::Int => {
-                        vec![ArrayValue::Int(0, z3::ast::BV::from_i64(0, 32)); len]
-                    }
-                    ArrayType::Float => {
-                        vec![ArrayValue::Float(0.0); len]
-                    }
-                    ArrayType::Byte => {
-                        vec![ArrayValue::Byte(0, z3::ast::BV::from_i64(0, 8)); len]
-                    }
-                    ArrayType::Char => {
-                        vec![ArrayValue::Char(0, z3::ast::BV::from_i64(0, 16)); len]
-                    }
-                    ArrayType::Short => {
-                        vec![ArrayValue::Short(0, z3::ast::BV::from_i64(0, 16)); len]
-                    }
-                    ArrayType::Boolean => todo!(),
-                };
+                let len = cur_frame.stack.pop().unwrap();
 
                 let idx = state.heap.heap.len();
                 cur_frame.stack.push(StackValue::Ref(
@@ -272,10 +248,10 @@ impl Interpreter {
                     z3_true(),
                     z3::ast::BV::from_u64(idx as u64, 32),
                 ));
-                state.heap.heap.push(HeapValue::Array {
-                    ty: *ty,
-                    values: arr,
-                });
+                state
+                    .heap
+                    .heap
+                    .push(HeapValue::Array(Array::new_zero(*ty, len)));
             }
             Instruction::ArrayStore { ty: _ } => {
                 let val = cur_frame
@@ -306,7 +282,9 @@ impl Interpreter {
                     );
                 };
 
-                if let HeapValue::Array { ty, values } = &mut state.heap.heap[arr as usize] {
+                if let HeapValue::Array(Array { ty, values, .. }) =
+                    &mut state.heap.heap[arr as usize]
+                {
                     // TODO: check type
                     if idx as usize >= values.len() {
                         return (
@@ -343,7 +321,7 @@ impl Interpreter {
                     );
                 };
 
-                if let HeapValue::Array { values, .. } = &state.heap.heap[arr as usize] {
+                if let HeapValue::Array(Array { values, .. }) = &state.heap.heap[arr as usize] {
                     // TODO change to symbolic length when adding symbolic arrays
                     cur_frame.push(StackValue::Int(
                         values.len() as i32,
@@ -382,7 +360,7 @@ impl Interpreter {
                     );
                 };
 
-                if let HeapValue::Array { values, .. } = &state.heap.heap[arr as usize] {
+                if let HeapValue::Array(Array { values, .. }) = &state.heap.heap[arr as usize] {
                     if idx as usize >= values.len() {
                         return (
                             Either::Result(OutOfBounds),

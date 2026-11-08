@@ -59,6 +59,17 @@ impl ArrayValue {
             ArrayValue::Boolean(i, bv) => StackValue::Int(*i as i32, bv.zero_ext(31)),
         }
     }
+
+    fn z3(&self) -> z3::ast::Dynamic {
+        match self {
+            ArrayValue::Int(_, bv)
+            | ArrayValue::Byte(_, bv)
+            | ArrayValue::Char(_, bv)
+            | ArrayValue::Short(_, bv)
+            | ArrayValue::Boolean(_, bv) => z3::ast::Dynamic::from_ast(bv),
+            ArrayValue::Float(_) => todo!(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -70,10 +81,7 @@ pub enum HeapValue {
     Char(u16, z3::ast::BV),
     Short(i16, z3::ast::BV),
     Boolean(bool, z3::ast::BV),
-    Array {
-        ty: ArrayType,
-        values: Vec<ArrayValue>,
-    },
+    Array(Array),
     Object {
         name: String,
         fields: HashMap<String, HeapValue>,
@@ -102,6 +110,55 @@ impl HeapValue {
 }
 
 #[derive(Clone, Debug)]
+pub struct Array {
+    pub ty: ArrayType,
+    pub values: Vec<ArrayValue>,
+    pub symbolic: z3::ast::Array,
+    pub len: z3::ast::BV,
+}
+
+impl Array {
+    pub fn from_values(ty: ArrayType, values: Vec<ArrayValue>) -> Self {
+        let mut symbolic =
+            z3::ast::Array::fresh_const("array", &z3::Sort::bitvector(32), &ty.z3_sort());
+        for (i, v) in values.iter().enumerate() {
+            symbolic = symbolic.store(&z3::ast::BV::from_u64(i as u64, 32), &v.z3());
+        }
+        let len = z3::ast::BV::from_u64(values.len() as u64, 32);
+        Array {
+            ty,
+            values,
+            symbolic,
+            len,
+        }
+    }
+
+    pub fn new_zero(ty: ArrayType, len: StackValue) -> Self {
+        let StackValue::Int(x, bv) = len else {
+            panic!("Invalid array length!")
+        };
+        let len = x as usize;
+        let default_val = match ty {
+            ArrayType::Int => ArrayValue::Int(0, z3::ast::BV::from_i64(0, 32)),
+            ArrayType::Float => ArrayValue::Float(0.0),
+            ArrayType::Byte => ArrayValue::Byte(0, z3::ast::BV::from_i64(0, 8)),
+            ArrayType::Char => ArrayValue::Char(0, z3::ast::BV::from_i64(0, 16)),
+            ArrayType::Short => ArrayValue::Short(0, z3::ast::BV::from_i64(0, 16)),
+            ArrayType::Boolean => ArrayValue::Boolean(false, z3::ast::BV::from_i64(0, 1)),
+        };
+        // 0 as default
+        let arr = vec![default_val.clone(); len];
+
+        Self {
+            ty,
+            values: arr,
+            symbolic: z3::ast::Array::const_array(&z3::Sort::bitvector(32), &default_val.z3()),
+            len: bv,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub enum SimpleRef {
     Class { name: String },
     Array { ty: ArrayType },
@@ -126,6 +183,17 @@ impl ArrayType {
             ArrayType::Char => SimpleType::Char,
             ArrayType::Short => SimpleType::Short,
             ArrayType::Boolean => SimpleType::Boolean,
+        }
+    }
+
+    pub fn z3_sort(&self) -> z3::Sort {
+        match self {
+            ArrayType::Int => z3::Sort::bitvector(32),
+            ArrayType::Float => z3::Sort::float32(),
+            ArrayType::Byte => z3::Sort::bitvector(8),
+            ArrayType::Char => z3::Sort::bitvector(16),
+            ArrayType::Short => z3::Sort::bitvector(16),
+            ArrayType::Boolean => z3::Sort::bitvector(1),
         }
     }
 }

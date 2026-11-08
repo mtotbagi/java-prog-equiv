@@ -1,5 +1,5 @@
 use crate::{
-    ArrayType, ArrayValue,
+    Array, ArrayType, ArrayValue,
     java_class::Method,
     java_types::{HeapValue, SimpleRef, SimpleType, StackValue},
     state::Heap,
@@ -146,7 +146,8 @@ fn parse_array(ty: &ArrayType, input: &str, heap: &mut Heap) -> StackValue {
         .collect();
 
     let idx = heap.heap.len() as u32;
-    heap.heap.push(HeapValue::Array { ty: *ty, values });
+    heap.heap
+        .push(HeapValue::Array(Array::from_values(*ty, values)));
     StackValue::Ref(
         Some(idx),
         z3::ast::Bool::from_bool(true),
@@ -174,10 +175,7 @@ fn parse_string(input: &str, heap: &mut Heap) -> StackValue {
     let mut fields = HashMap::new();
     fields.insert(
         "value".to_string(),
-        HeapValue::Array {
-            ty: ArrayType::Char,
-            values: chars,
-        },
+        HeapValue::Array(Array::from_values(ArrayType::Char, chars)),
     );
 
     let idx = heap.heap.len() as u32;
