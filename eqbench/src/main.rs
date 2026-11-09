@@ -27,7 +27,7 @@ enum Command {
         /// Case id, e.g. `caldat-caldat-Neq`
         id: String,
     },
-    /// Compile every case to bytecode in `target/eqbench`
+    /// Compile every case to bytecode (javac) then to JSON (jvm2json) in `target/eqbench`
     Build,
 }
 
@@ -58,13 +58,21 @@ fn build(dataset: &Dataset) -> Result<()> {
     for failure in &report.compile_failures {
         eprintln!("failed to compile {}:\n{}", failure.what, failure.message);
     }
+    for failure in &report.decompile_failures {
+        eprintln!("failed to decompile {}:\n{}", failure.what, failure.message);
+    }
     println!(
-        "compiled {} sources ({} fixed, {} failures) in {:.1}s",
+        "compiled {} sources ({} fixed, {} failures)",
         report.sources,
         report.fixed_sources,
         report.compile_failures.len(),
-        report.elapsed.as_secs_f64()
     );
+    println!(
+        "decompiled {} classes ({} failures)",
+        report.classes,
+        report.decompile_failures.len(),
+    );
+    println!("done in {:.1}s", report.elapsed.as_secs_f64());
     println!("output: {}", layout.root.display());
     Ok(())
 }

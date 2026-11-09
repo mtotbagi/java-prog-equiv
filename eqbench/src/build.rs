@@ -1,4 +1,5 @@
-//! Compilation of the cases to bytecode with `javac`.
+//! Compilation of the cases to bytecode with `javac`, then to JSON with
+//! `jvm2json` (<https://github.com/kalhauge/jvm2json>).
 //!
 //! The dataset is never modified. Sources are first copied to a staging
 //! directory where they are fixed: the `package` declaration must match the
@@ -11,16 +12,20 @@
 //! ```text
 //! staging/<old|new>/benchmarks/<bench>/<prog>/<Eq|Neq>/<oldV|newV>.java
 //! classes/<old|new>/benchmarks/<bench>/<prog>/<Eq|Neq>/*.class
+//! decompiled/<case-id>/<old|new>/*.json
 //! ```
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 
-use crate::case::{Case, Dataset, Version};
+use crate::case::{Case, CaseId, Dataset, Version};
 
 /// Paths of the build artifacts.
 #[derive(Debug, Clone)]
@@ -40,6 +45,14 @@ impl Layout {
     pub fn classes(&self, version: Version) -> PathBuf {
         self.root.join("classes").join(version.as_str())
     }
+
+    /// Directory holding the JSON of every class of one version of a case.
+    pub fn decompiled(&self, id: &CaseId, version: Version) -> PathBuf {
+        self.root
+            .join("decompiled")
+            .join(id.to_string())
+            .join(version.as_str())
+    }
 }
 
 /// Something that went wrong for one case, the build goes on.
@@ -55,6 +68,8 @@ pub struct Report {
     /// Sources whose package or class name had to be fixed.
     pub fixed_sources: usize,
     pub compile_failures: Vec<Failure>,
+    pub classes: usize,
+    pub decompile_failures: Vec<Failure>,
     pub elapsed: Duration,
 }
 
@@ -62,6 +77,7 @@ pub struct Report {
 pub fn build(dataset: &Dataset, layout: &Layout) -> Result<Report> {
     let start = Instant::now();
     check_tool("javac", "-version")?;
+    check_tool("jvm2json", "--help")?;
 
     if layout.root.exists() {
         fs::remove_dir_all(&layout.root)
@@ -74,6 +90,7 @@ pub fn build(dataset: &Dataset, layout: &Layout) -> Result<Report> {
         eprintln!("compiling {} {version} sources", staged.len());
         compile(&staged, &layout.classes(version), version, &mut report)?;
     }
+    decompile(dataset, layout, &mut report)?;
     report.elapsed = start.elapsed();
     Ok(report)
 }
@@ -205,6 +222,84 @@ fn compile(staged: &[Staged], out: &Path, version: Version, report: &mut Report)
         }
     }
     Ok(())
+}
+
+struct Job {
+    what: String,
+    class: PathBuf,
+    json: PathBuf,
+}
+
+/// Runs `jvm2json` on every compiled class, in parallel.
+fn decompile(dataset: &Dataset, layout: &Layout, report: &mut Report) -> Result<()> {
+    let mut jobs = Vec::new();
+    for case in &dataset.cases {
+        for version in Version::ALL {
+            let classes = layout.classes(version).join(case.id.package_dir());
+            // Missing when the case did not compile, already reported.
+            let Ok(entries) = fs::read_dir(&classes) else {
+                continue;
+            };
+            let out = layout.decompiled(&case.id, version);
+            fs::create_dir_all(&out).with_context(|| format!("cannot create {}", out.display()))?;
+            for entry in entries {
+                let class = entry?.path();
+                if class.extension().is_none_or(|e| e != "class") {
+                    continue;
+                }
+                let name = class
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .context("class without a file name")?;
+                jobs.push(Job {
+                    what: format!("{} ({version}) {name}", case.id),
+                    json: out.join(format!("{name}.json")),
+                    class,
+                });
+            }
+        }
+    }
+
+    eprintln!("decompiling {} classes with jvm2json", jobs.len());
+    let next = AtomicUsize::new(0);
+    let failures = Mutex::new(Vec::new());
+    let workers = thread::available_parallelism().map_or(4, |n| n.get());
+    thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| {
+                while let Some(job) = jobs.get(next.fetch_add(1, Ordering::Relaxed)) {
+                    if let Err(message) = jvm2json(job) {
+                        let failure = Failure {
+                            what: job.what.clone(),
+                            message,
+                        };
+                        failures.lock().expect("poisoned lock").push(failure);
+                    }
+                }
+            });
+        }
+    });
+
+    let mut failures = failures.into_inner().expect("poisoned lock");
+    failures.sort_by(|a, b| a.what.cmp(&b.what));
+    report.classes = jobs.len() - failures.len();
+    report.decompile_failures = failures;
+    Ok(())
+}
+
+fn jvm2json(job: &Job) -> Result<(), String> {
+    let output = Command::new("jvm2json")
+        .arg("-s")
+        .arg(&job.class)
+        .arg("-t")
+        .arg(&job.json)
+        .output()
+        .map_err(|e| format!("cannot run jvm2json: {e}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(first_lines(&String::from_utf8_lossy(&output.stderr), 3))
+    }
 }
 
 fn first_lines(text: &str, n: usize) -> String {
