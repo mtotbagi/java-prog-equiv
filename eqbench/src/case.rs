@@ -5,6 +5,8 @@ use std::str::FromStr;
 
 use anyhow::{Context, Result, bail};
 
+use crate::desc::{DESC_FILE, Desc};
+
 /// Name of the original version of a program in a case directory.
 pub const OLD_FILE: &str = "oldV.java";
 /// Name of the modified version of a program in a case directory.
@@ -85,6 +87,8 @@ pub struct Case {
     pub dir: PathBuf,
     pub old: PathBuf,
     pub new: PathBuf,
+    /// Content of `J-Desc.json`, missing for the whole-program cases.
+    pub desc: Option<Desc>,
 }
 
 /// All the Java cases of the dataset.
@@ -139,6 +143,12 @@ fn load_case(dir: &Path) -> Result<Option<Case>> {
         (true, true) => {}
         _ => bail!("{} should contain both {OLD_FILE} and {NEW_FILE}", dir.display()),
     }
+    let desc_file = dir.join(DESC_FILE);
+    let desc = if desc_file.is_file() {
+        Some(Desc::load(&desc_file)?)
+    } else {
+        None
+    };
     let prog_dir = dir.parent().context("case directory has no parent")?;
     let bench_dir = prog_dir.parent().context("program directory has no parent")?;
     Ok(Some(Case {
@@ -150,6 +160,7 @@ fn load_case(dir: &Path) -> Result<Option<Case>> {
         dir: dir.to_path_buf(),
         old,
         new,
+        desc,
     }))
 }
 
