@@ -1,3 +1,4 @@
+pub mod build;
 pub mod case;
 pub mod desc;
 pub mod diff;
@@ -13,4 +14,13 @@ fn crate_dir() -> &'static Path {
 /// The `benchmarks` directory of the EqBench dataset.
 pub fn dataset_dir() -> PathBuf {
     crate_dir().join("src_data").join("benchmarks")
+}
+
+/// Where the build artifacts go: `<workspace>/target/eqbench`.
+pub fn output_dir() -> PathBuf {
+    crate_dir()
+        .parent()
+        .unwrap_or_else(|| crate_dir())
+        .join("target")
+        .join("eqbench")
 }

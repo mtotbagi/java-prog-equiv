@@ -54,9 +54,47 @@ pub struct CaseId {
     pub kind: Kind,
 }
 
+impl CaseId {
+    /// The Java package the sources of this case should declare.
+    pub fn java_package(&self) -> String {
+        format!("benchmarks.{}.{}.{}", self.bench, self.prog, self.kind)
+    }
+
+    /// Directory of the package, relative to a source or class root.
+    pub fn package_dir(&self) -> PathBuf {
+        ["benchmarks", &self.bench, &self.prog, self.kind.as_str()]
+            .iter()
+            .collect()
+    }
+}
+
 impl fmt::Display for CaseId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}-{}-{}", self.bench, self.prog, self.kind)
+    }
+}
+
+/// One of the two programs of a case.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Version {
+    Old,
+    New,
+}
+
+impl Version {
+    pub const ALL: [Version; 2] = [Version::Old, Version::New];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Version::Old => "old",
+            Version::New => "new",
+        }
+    }
+}
+
+impl fmt::Display for Version {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.pad(self.as_str())
     }
 }
 
@@ -89,6 +127,15 @@ pub struct Case {
     pub new: PathBuf,
     /// Content of `J-Desc.json`, missing for the whole-program cases.
     pub desc: Option<Desc>,
+}
+
+impl Case {
+    pub fn source(&self, version: Version) -> &Path {
+        match version {
+            Version::Old => &self.old,
+            Version::New => &self.new,
+        }
+    }
 }
 
 /// All the Java cases of the dataset.

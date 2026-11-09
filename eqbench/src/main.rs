@@ -4,10 +4,11 @@ use std::process::ExitCode;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
+use eqbench::build::Layout;
 use eqbench::case::{Case, Dataset, Kind};
-use eqbench::dataset_dir;
 use eqbench::diff::whole_file_diff;
 use eqbench::term::Style;
+use eqbench::{dataset_dir, output_dir};
 
 /// Tooling around the EqBench dataset of equivalent and non-equivalent Java programs.
 #[derive(Parser)]
@@ -26,6 +27,8 @@ enum Command {
         /// Case id, e.g. `caldat-caldat-Neq`
         id: String,
     },
+    /// Compile every case to bytecode in `target/eqbench`
+    Build,
 }
 
 fn main() -> ExitCode {
@@ -44,7 +47,25 @@ fn run(command: Command) -> Result<()> {
     match command {
         Command::List => list(&dataset),
         Command::Details { id } => details(&dataset, dataset.get(&id)?)?,
+        Command::Build => build(&dataset)?,
     }
+    Ok(())
+}
+
+fn build(dataset: &Dataset) -> Result<()> {
+    let layout = Layout::new(output_dir());
+    let report = eqbench::build::build(dataset, &layout)?;
+    for failure in &report.compile_failures {
+        eprintln!("failed to compile {}:\n{}", failure.what, failure.message);
+    }
+    println!(
+        "compiled {} sources ({} fixed, {} failures) in {:.1}s",
+        report.sources,
+        report.fixed_sources,
+        report.compile_failures.len(),
+        report.elapsed.as_secs_f64()
+    );
+    println!("output: {}", layout.root.display());
     Ok(())
 }
 
