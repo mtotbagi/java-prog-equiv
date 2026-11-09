@@ -366,7 +366,7 @@ impl Interpreter {
                 };
                 assert!(*ty == value.get_type());
                 let res = match value {
-                    StackValue::Int(v, bv) => StackValue::Int(-v, bv.bvneg()),
+                    StackValue::Int(v, bv) => StackValue::Int(v.wrapping_neg(), bv.bvneg()),
                     StackValue::Float(v) => StackValue::Float(-v),
                     StackValue::Ref(_) => panic!(),
                 };
