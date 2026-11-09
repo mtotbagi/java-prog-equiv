@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::{self, Write};
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -11,6 +12,20 @@ use eqbench::case::{Case, Dataset, Kind};
 use eqbench::diff::whole_file_diff;
 use eqbench::term::Style;
 use eqbench::{dataset_dir, output_dir};
+
+/// `println!` returning an error instead of panicking when stdout is closed,
+/// e.g. `eqbench list | head`.
+macro_rules! outln {
+    ($($arg:tt)*) => {
+        writeln!(io::stdout(), $($arg)*)?
+    };
+}
+
+macro_rules! out {
+    ($($arg:tt)*) => {
+        write!(io::stdout(), $($arg)*)?
+    };
+}
 
 /// Tooling around the EqBench dataset of equivalent and non-equivalent Java programs.
 #[derive(Parser)]
@@ -49,6 +64,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     match run(cli.command) {
         Ok(()) => ExitCode::SUCCESS,
+        Err(err) if is_broken_pipe(&err) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("error: {err:#}");
             ExitCode::FAILURE
@@ -56,10 +72,17 @@ fn main() -> ExitCode {
     }
 }
 
+fn is_broken_pipe(err: &anyhow::Error) -> bool {
+    err.chain().any(|e| {
+        e.downcast_ref::<io::Error>()
+            .is_some_and(|e| e.kind() == io::ErrorKind::BrokenPipe)
+    })
+}
+
 fn run(command: Command) -> Result<()> {
     let load = || Dataset::load(&dataset_dir());
     match command {
-        Command::List => list(&load()?),
+        Command::List => list(&load()?)?,
         Command::Details { id } => {
             let dataset = load()?;
             details(&dataset, dataset.get(&id)?)?;
@@ -74,9 +97,9 @@ fn run(command: Command) -> Result<()> {
 fn clean() -> Result<()> {
     let layout = Layout::new(output_dir());
     if eqbench::build::clean(&layout)? {
-        println!("removed {}", layout.root.display());
+        outln!("removed {}", layout.root.display());
     } else {
-        println!("nothing to clean");
+        outln!("nothing to clean");
     }
     Ok(())
 }
@@ -90,19 +113,19 @@ fn build(dataset: &Dataset) -> Result<()> {
     for failure in &report.decompile_failures {
         eprintln!("failed to decompile {}:\n{}", failure.what, failure.message);
     }
-    println!(
+    outln!(
         "compiled {} sources ({} fixed, {} failures)",
         report.sources,
         report.fixed_sources,
         report.compile_failures.len(),
     );
-    println!(
+    outln!(
         "decompiled {} classes ({} failures)",
         report.classes,
         report.decompile_failures.len(),
     );
-    println!("done in {:.1}s", report.elapsed.as_secs_f64());
-    println!("output: {}", layout.root.display());
+    outln!("done in {:.1}s", report.elapsed.as_secs_f64());
+    outln!("output: {}", layout.root.display());
     Ok(())
 }
 
@@ -138,13 +161,13 @@ fn analyse(dataset: &Dataset, cmd: &[String]) -> Result<()> {
         if let Outcome::Invalid(output) = &result.outcome {
             line.push_str(&style.dim(&format!("  output: {output:?}")));
         }
-        println!("{line}");
+        outln!("{line}");
         results.push(result);
     }
 
     let summary = Summary::new(&results);
-    println!();
-    println!(
+    outln!();
+    outln!(
         "{}",
         style.bold(&format!(
             "correct predictions: {}/{} ({:.1}%)",
@@ -158,14 +181,17 @@ fn analyse(dataset: &Dataset, cmd: &[String]) -> Result<()> {
         .as_ref()
         .map(|(id, t)| format!(", max {} ({id})", format_duration(*t)))
         .unwrap_or_default();
-    println!(
+    outln!(
         "time: total {}, mean {}{slowest}",
         format_duration(summary.total_time),
         format_duration(summary.mean_time()),
     );
-    println!(
+    outln!(
         "errors: {} timeouts, {} crashes, {} invalid outputs, {} not built",
-        summary.timeouts, summary.crashes, summary.invalid, summary.not_built
+        summary.timeouts,
+        summary.crashes,
+        summary.invalid,
+        summary.not_built
     );
     Ok(())
 }
@@ -187,7 +213,7 @@ fn id_width(dataset: &Dataset) -> usize {
         .unwrap_or(0)
 }
 
-fn list(dataset: &Dataset) {
+fn list(dataset: &Dataset) -> Result<()> {
     let width = id_width(dataset);
     let method_width = dataset
         .cases
@@ -197,9 +223,13 @@ fn list(dataset: &Dataset) {
         .unwrap_or(0)
         .max("METHOD".len());
 
-    println!(
+    outln!(
         "{:width$}  {:4}  {:method_width$}  {:>4}  {:>7}",
-        "ID", "KIND", "METHOD", "LOC", "CHANGES"
+        "ID",
+        "KIND",
+        "METHOD",
+        "LOC",
+        "CHANGES"
     );
     for case in &dataset.cases {
         let (method, loc, changes) = match &case.desc {
@@ -210,7 +240,7 @@ fn list(dataset: &Dataset) {
             ),
             None => ("-", "-".to_string(), "-".to_string()),
         };
-        println!(
+        outln!(
             "{:width$}  {:4}  {:method_width$}  {:>4}  {:>7}",
             case.id.to_string(),
             case.id.kind,
@@ -225,12 +255,13 @@ fn list(dataset: &Dataset) {
         .iter()
         .filter(|c| c.id.kind == Kind::Eq)
         .count();
-    println!(
+    outln!(
         "\n{} cases ({} Eq, {} Neq)",
         dataset.cases.len(),
         eq,
         dataset.cases.len() - eq
     );
+    Ok(())
 }
 
 fn details(dataset: &Dataset, case: &Case) -> Result<()> {
@@ -239,19 +270,19 @@ fn details(dataset: &Dataset, case: &Case) -> Result<()> {
         Kind::Eq => "equivalent",
         Kind::Neq => "not equivalent",
     };
-    println!("{} ({verdict})", style.bold(&case.id.to_string()));
+    outln!("{} ({verdict})", style.bold(&case.id.to_string()));
 
     match &case.desc {
-        None => println!("{}", style.dim("no J-Desc.json for this case")),
+        None => outln!("{}", style.dim("no J-Desc.json for this case")),
         Some(desc) => {
-            println!("method           {}", desc.method);
-            println!("LOC              {}", desc.loc);
-            println!("loops            {}", desc.loops);
-            println!("non-linear       {}", desc.non_linear);
+            outln!("method           {}", desc.method);
+            outln!("LOC              {}", desc.loc);
+            outln!("loops            {}", desc.loops);
+            outln!("non-linear       {}", desc.non_linear);
             for (i, change) in desc.changes.iter().enumerate() {
                 let label = if i == 0 { "changes" } else { "" };
                 let lines: Vec<String> = change.lines.iter().map(|l| l.to_string()).collect();
-                println!(
+                outln!(
                     "{label:16} line {:8} {:7} {}",
                     lines.join(","),
                     change.kind.to_string(),
@@ -261,18 +292,18 @@ fn details(dataset: &Dataset, case: &Case) -> Result<()> {
             if let Some(params) = &desc.counter_example {
                 for (i, param) in params.iter().enumerate() {
                     let label = if i == 0 { "counter-example" } else { "" };
-                    println!("{label:16} {param}");
+                    outln!("{label:16} {param}");
                 }
             }
         }
     }
-    println!();
+    outln!();
 
     let old = fs::read_to_string(&case.old)
         .with_context(|| format!("cannot read {}", case.old.display()))?;
     let new = fs::read_to_string(&case.new)
         .with_context(|| format!("cannot read {}", case.new.display()))?;
-    print!(
+    out!(
         "{}",
         whole_file_diff(
             &dataset.relative(&case.old).display().to_string(),
