@@ -1,0 +1,3 @@
+[submodule "eqbench/src_data"]
+	path = eqbench/src_data
+	url = https://github.com/shrBadihi/EqBench.git
