@@ -78,11 +78,7 @@ pub fn build(dataset: &Dataset, layout: &Layout) -> Result<Report> {
     let start = Instant::now();
     check_tool("javac", "-version")?;
     check_tool("jvm2json", "--help")?;
-
-    if layout.root.exists() {
-        fs::remove_dir_all(&layout.root)
-            .with_context(|| format!("cannot remove {}", layout.root.display()))?;
-    }
+    clean(layout)?;
 
     let mut report = Report::default();
     for version in Version::ALL {
@@ -93,6 +89,16 @@ pub fn build(dataset: &Dataset, layout: &Layout) -> Result<Report> {
     decompile(dataset, layout, &mut report)?;
     report.elapsed = start.elapsed();
     Ok(report)
+}
+
+/// Removes every build artifact, returns whether there was anything to remove.
+pub fn clean(layout: &Layout) -> Result<bool> {
+    if !layout.root.exists() {
+        return Ok(false);
+    }
+    fs::remove_dir_all(&layout.root)
+        .with_context(|| format!("cannot remove {}", layout.root.display()))?;
+    Ok(true)
 }
 
 /// Checks that `tool` can be run, `/usr/bin/javac` on macOS exists even

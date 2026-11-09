@@ -29,6 +29,8 @@ enum Command {
     },
     /// Compile every case to bytecode (javac) then to JSON (jvm2json) in `target/eqbench`
     Build,
+    /// Remove everything `build` produced
+    Clean,
 }
 
 fn main() -> ExitCode {
@@ -43,11 +45,25 @@ fn main() -> ExitCode {
 }
 
 fn run(command: Command) -> Result<()> {
-    let dataset = Dataset::load(&dataset_dir())?;
+    let load = || Dataset::load(&dataset_dir());
     match command {
-        Command::List => list(&dataset),
-        Command::Details { id } => details(&dataset, dataset.get(&id)?)?,
-        Command::Build => build(&dataset)?,
+        Command::List => list(&load()?),
+        Command::Details { id } => {
+            let dataset = load()?;
+            details(&dataset, dataset.get(&id)?)?;
+        }
+        Command::Build => build(&load()?)?,
+        Command::Clean => clean()?,
+    }
+    Ok(())
+}
+
+fn clean() -> Result<()> {
+    let layout = Layout::new(output_dir());
+    if eqbench::build::clean(&layout)? {
+        println!("removed {}", layout.root.display());
+    } else {
+        println!("nothing to clean");
     }
     Ok(())
 }
