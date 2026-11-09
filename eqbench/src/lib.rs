@@ -1,5 +1,7 @@
 pub mod case;
 pub mod desc;
+pub mod diff;
+pub mod term;
 
 use std::path::{Path, PathBuf};
 

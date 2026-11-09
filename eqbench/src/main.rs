@@ -1,10 +1,13 @@
+use std::fs;
 use std::process::ExitCode;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
-use eqbench::case::{Dataset, Kind};
+use eqbench::case::{Case, Dataset, Kind};
 use eqbench::dataset_dir;
+use eqbench::diff::whole_file_diff;
+use eqbench::term::Style;
 
 /// Tooling around the EqBench dataset of equivalent and non-equivalent Java programs.
 #[derive(Parser)]
@@ -18,6 +21,11 @@ struct Cli {
 enum Command {
     /// List every case as `<bench>-<prog>-<Eq|Neq>`
     List,
+    /// Show the metadata of a case and the diff between its two versions
+    Details {
+        /// Case id, e.g. `caldat-caldat-Neq`
+        id: String,
+    },
 }
 
 fn main() -> ExitCode {
@@ -35,6 +43,7 @@ fn run(command: Command) -> Result<()> {
     let dataset = Dataset::load(&dataset_dir())?;
     match command {
         Command::List => list(&dataset),
+        Command::Details { id } => details(&dataset, dataset.get(&id)?)?,
     }
     Ok(())
 }
@@ -88,4 +97,56 @@ fn list(dataset: &Dataset) {
         eq,
         dataset.cases.len() - eq
     );
+}
+
+fn details(dataset: &Dataset, case: &Case) -> Result<()> {
+    let style = Style::stdout();
+    let verdict = match case.id.kind {
+        Kind::Eq => "equivalent",
+        Kind::Neq => "not equivalent",
+    };
+    println!("{} ({verdict})", style.bold(&case.id.to_string()));
+
+    match &case.desc {
+        None => println!("{}", style.dim("no J-Desc.json for this case")),
+        Some(desc) => {
+            println!("method           {}", desc.method);
+            println!("LOC              {}", desc.loc);
+            println!("loops            {}", desc.loops);
+            println!("non-linear       {}", desc.non_linear);
+            for (i, change) in desc.changes.iter().enumerate() {
+                let label = if i == 0 { "changes" } else { "" };
+                let lines: Vec<String> = change.lines.iter().map(|l| l.to_string()).collect();
+                println!(
+                    "{label:16} line {:8} {:7} {}",
+                    lines.join(","),
+                    change.kind.to_string(),
+                    change.operation
+                );
+            }
+            if let Some(params) = &desc.counter_example {
+                for (i, param) in params.iter().enumerate() {
+                    let label = if i == 0 { "counter-example" } else { "" };
+                    println!("{label:16} {param}");
+                }
+            }
+        }
+    }
+    println!();
+
+    let old = fs::read_to_string(&case.old)
+        .with_context(|| format!("cannot read {}", case.old.display()))?;
+    let new = fs::read_to_string(&case.new)
+        .with_context(|| format!("cannot read {}", case.new.display()))?;
+    print!(
+        "{}",
+        whole_file_diff(
+            &dataset.relative(&case.old).display().to_string(),
+            &old,
+            &dataset.relative(&case.new).display().to_string(),
+            &new,
+            style,
+        )
+    );
+    Ok(())
 }

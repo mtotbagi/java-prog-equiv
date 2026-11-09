@@ -130,6 +130,32 @@ impl Dataset {
     pub fn find(&self, id: &CaseId) -> Option<&Case> {
         self.cases.iter().find(|c| &c.id == id)
     }
+
+    /// Looks up a case from a user given id, suggesting close ids on failure.
+    pub fn get(&self, id: &str) -> Result<&Case> {
+        if let Ok(parsed) = id.parse::<CaseId>()
+            && let Some(case) = self.find(&parsed)
+        {
+            return Ok(case);
+        }
+        let needle = id.to_lowercase();
+        let close: Vec<String> = self
+            .cases
+            .iter()
+            .map(|c| c.id.to_string())
+            .filter(|c| c.to_lowercase().contains(&needle))
+            .take(5)
+            .collect();
+        if close.is_empty() {
+            bail!("unknown case `{id}`, run `eqbench list` to see every case");
+        }
+        bail!("unknown case `{id}`, did you mean: {}", close.join(", "))
+    }
+
+    /// Path of a file relative to the dataset root, for display.
+    pub fn relative<'a>(&self, path: &'a Path) -> &'a Path {
+        path.strip_prefix(&self.root).unwrap_or(path)
+    }
 }
 
 fn load_case(dir: &Path) -> Result<Option<Case>> {
