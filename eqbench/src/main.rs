@@ -1,9 +1,11 @@
 use std::fs;
 use std::process::ExitCode;
+use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 
+use eqbench::analyse::{CaseResult, Outcome, Summary, TIMEOUT, run_case};
 use eqbench::build::Layout;
 use eqbench::case::{Case, Dataset, Kind};
 use eqbench::diff::whole_file_diff;
@@ -31,6 +33,16 @@ enum Command {
     Build,
     /// Remove everything `build` produced
     Clean,
+    /// Run an analysis tool on every case and count its correct predictions
+    ///
+    /// The tool is called as `<cmd…> <old-dir> <new-dir>`, the directories
+    /// holding the JSON of every class of both versions, and must print `eq`
+    /// or `neq` on the first line of its output.
+    Analyse {
+        /// The tool and its arguments
+        #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+        cmd: Vec<String>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -54,6 +66,7 @@ fn run(command: Command) -> Result<()> {
         }
         Command::Build => build(&load()?)?,
         Command::Clean => clean()?,
+        Command::Analyse { cmd } => analyse(&load()?, &cmd)?,
     }
     Ok(())
 }
@@ -93,13 +106,89 @@ fn build(dataset: &Dataset) -> Result<()> {
     Ok(())
 }
 
-fn list(dataset: &Dataset) {
-    let width = dataset
+fn analyse(dataset: &Dataset, cmd: &[String]) -> Result<()> {
+    let layout = Layout::new(output_dir());
+    if !layout.root.join("decompiled").is_dir() {
+        bail!("nothing is built, run `eqbench build` first");
+    }
+    let style = Style::stdout();
+    let width = id_width(dataset);
+    eprintln!(
+        "analysing {} cases with `{}` (timeout {}s)",
+        dataset.cases.len(),
+        cmd.join(" "),
+        TIMEOUT.as_secs()
+    );
+
+    let mut results: Vec<CaseResult> = Vec::with_capacity(dataset.cases.len());
+    for case in &dataset.cases {
+        let result = run_case(cmd, case, &layout)?;
+        let mark = if result.is_correct() {
+            style.green("✓")
+        } else {
+            style.red("✗")
+        };
+        let mut line = format!(
+            "{:width$}  expected {:3}  got {:9}  {mark}  {:>9}",
+            result.id.to_string(),
+            Outcome::Predicted(result.id.kind).label(),
+            result.outcome.label(),
+            format_duration(result.elapsed),
+        );
+        if let Outcome::Invalid(output) = &result.outcome {
+            line.push_str(&style.dim(&format!("  output: {output:?}")));
+        }
+        println!("{line}");
+        results.push(result);
+    }
+
+    let summary = Summary::new(&results);
+    println!();
+    println!(
+        "{}",
+        style.bold(&format!(
+            "correct predictions: {}/{} ({:.1}%)",
+            summary.correct,
+            summary.total,
+            summary.accuracy()
+        ))
+    );
+    let slowest = summary
+        .slowest
+        .as_ref()
+        .map(|(id, t)| format!(", max {} ({id})", format_duration(*t)))
+        .unwrap_or_default();
+    println!(
+        "time: total {}, mean {}{slowest}",
+        format_duration(summary.total_time),
+        format_duration(summary.mean_time()),
+    );
+    println!(
+        "errors: {} timeouts, {} crashes, {} invalid outputs, {} not built",
+        summary.timeouts, summary.crashes, summary.invalid, summary.not_built
+    );
+    Ok(())
+}
+
+fn format_duration(d: Duration) -> String {
+    if d < Duration::from_secs(1) {
+        format!("{:.1} ms", d.as_secs_f64() * 1000.0)
+    } else {
+        format!("{:.2} s", d.as_secs_f64())
+    }
+}
+
+fn id_width(dataset: &Dataset) -> usize {
+    dataset
         .cases
         .iter()
         .map(|c| c.id.to_string().len())
         .max()
-        .unwrap_or(0);
+        .unwrap_or(0)
+}
+
+fn list(dataset: &Dataset) {
+    let width = id_width(dataset);
     let method_width = dataset
         .cases
         .iter()

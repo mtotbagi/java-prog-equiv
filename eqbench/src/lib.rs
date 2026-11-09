@@ -1,3 +1,4 @@
+pub mod analyse;
 pub mod build;
 pub mod case;
 pub mod desc;
