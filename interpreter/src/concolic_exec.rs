@@ -1,7 +1,7 @@
 use core::panic;
-use std::{eprint, print, println};
+use std::{println};
 
-use z3::{SatResult, Solver, ast::BV};
+use z3::{SatResult, Solver, Model};
 
 use crate::*;
 
@@ -38,64 +38,46 @@ impl ConcolicExecutor {
         let mut input_stack = vec![(initial_input, 0)];
 
         // run interpreter
-        while let Some(input) = input_stack.pop() {
-            let (_, path, res) = self.interpreter.interpret(method, input.0.clone(), iter);
-            output.push((input.0, path.clone(), res));
-
-            for (i,c) in path[(input.1)..].iter().enumerate() {
-                println!("{i}");
-                println!("{}", path.len());
-                
-                let c = c.not();
+        while let Some((input,depth)) = input_stack.pop() {
+            if output.len() as u32 >= max_runs{
+                break;
+            }
+            let (_, path, res) = self.interpreter.interpret(method, input.clone(), iter);
+            
+            //Negate every input from some depth n
+            for i in depth..path.len() {
                 let s = Solver::new();
-                
-                println!("{c}");
-
-                for j in 0..i {
-                    s.assert(path[j].clone());
+                //Keep the inputs the same until the negated input
+                for c in &path[..i] {
+                    s.assert(c);
                 }
-                s.assert(c);
-                println!("{s}");
+                s.assert(path[i].not());
 
                 if s.check() == SatResult::Sat {
-                    let new_input = s.get_model().unwrap();
-                    println!("{new_input}");
-                    //.eval(ast, true).unwrap();
-                    //input_stack.push((new_input,i));
+                    let model = s.get_model().unwrap();
+                    input_stack.push((next_input(&model, &input), i+1));
                 }
-                
-
             }
+
+            output.push((input, path.clone(), res));
         }
-        
-        
-        // //Empty path
-        // if path.is_empty() {
-        //     println!("no branches on this path");
-        //     return;
-        // }
-        
-        // println!("result: {res:?}");
-        // for constraint in &path {
-        //     println!("condition: {constraint}");
-        // }
-
-        // //Negate the last condition
-        // let no_constraints = path.len();
-        // let last_constraint = path[no_constraints - 1].clone();
-        // path[no_constraints - 1] = last_constraint.not();
-
-        // //Solve for the new path trying to get a new input
-        // let s = Solver::new();
-        // for constraint in path {
-        //     s.assert(constraint);
-        // }
-
-        // if s.check() == SatResult::Sat {
-        //     println!("{}", s.get_model().unwrap());
-        // };
         
         output
     }
 
+}
+
+fn next_input(model: &Model, old_input: &(Vec<StackValue>, Heap)) -> (Vec<StackValue>, Heap) {
+    let values = old_input
+        .0
+        .iter()
+        .map(|value| match value {
+            StackValue::Int(_, bv) => {
+                let solved = model.eval(bv, true).unwrap().as_i64().unwrap() as i32;
+                StackValue::Int(solved, bv.clone())
+            }
+            other => other.clone(),
+        })
+        .collect();
+    (values, old_input.1.clone())
 }
