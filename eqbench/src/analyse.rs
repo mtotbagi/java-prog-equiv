@@ -220,7 +220,10 @@ mod tests {
     #[test]
     fn parses_predictions() {
         assert_eq!(parse_prediction("eq\n"), Outcome::Predicted(Kind::Eq));
-        assert_eq!(parse_prediction("\n  NEQ \nmore"), Outcome::Predicted(Kind::Neq));
+        assert_eq!(
+            parse_prediction("\n  NEQ \nmore"),
+            Outcome::Predicted(Kind::Neq)
+        );
         assert_eq!(parse_prediction("maybe"), Outcome::Invalid("maybe".into()));
         assert_eq!(parse_prediction(""), Outcome::Invalid(String::new()));
     }

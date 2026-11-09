@@ -254,7 +254,10 @@ mod tests {
 
     #[test]
     fn normalises_change_kinds() {
-        assert_eq!("Insertion".parse::<ChangeKind>().unwrap(), ChangeKind::Insert);
+        assert_eq!(
+            "Insertion".parse::<ChangeKind>().unwrap(),
+            ChangeKind::Insert
+        );
         assert_eq!("update".parse::<ChangeKind>().unwrap(), ChangeKind::Update);
         assert_eq!("Delete".parse::<ChangeKind>().unwrap(), ChangeKind::Delete);
         assert!("Rename".parse::<ChangeKind>().is_err());

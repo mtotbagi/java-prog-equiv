@@ -336,7 +336,10 @@ mod tests {
     fn keeps_trailing_content_and_ignores_lookalikes() {
         let src = "// packages\npackage  x.y ; // comment\nclass packageInfo {}\n";
         let (fixed, _) = fix_package(src, "a.b");
-        assert_eq!(fixed, "// packages\npackage a.b; // comment\nclass packageInfo {}\n");
+        assert_eq!(
+            fixed,
+            "// packages\npackage a.b; // comment\nclass packageInfo {}\n"
+        );
     }
 
     #[test]

@@ -112,7 +112,9 @@ impl FromStr for CaseId {
         Ok(CaseId {
             bench: bench.to_string(),
             prog: prog.to_string(),
-            kind: kind.parse().with_context(|| format!("invalid case id `{s}`"))?,
+            kind: kind
+                .parse()
+                .with_context(|| format!("invalid case id `{s}`"))?,
         })
     }
 }
@@ -214,7 +216,10 @@ fn load_case(dir: &Path) -> Result<Option<Case>> {
     match (old.is_file(), new.is_file()) {
         (false, false) => return Ok(None),
         (true, true) => {}
-        _ => bail!("{} should contain both {OLD_FILE} and {NEW_FILE}", dir.display()),
+        _ => bail!(
+            "{} should contain both {OLD_FILE} and {NEW_FILE}",
+            dir.display()
+        ),
     }
     let desc_file = dir.join(DESC_FILE);
     let desc = if desc_file.is_file() {
@@ -223,7 +228,9 @@ fn load_case(dir: &Path) -> Result<Option<Case>> {
         None
     };
     let prog_dir = dir.parent().context("case directory has no parent")?;
-    let bench_dir = prog_dir.parent().context("program directory has no parent")?;
+    let bench_dir = prog_dir
+        .parent()
+        .context("program directory has no parent")?;
     Ok(Some(Case {
         id: CaseId {
             bench: file_name(bench_dir).to_string(),
@@ -249,7 +256,9 @@ fn subdirs(dir: &Path) -> Result<Vec<PathBuf>> {
 }
 
 fn file_name(path: &Path) -> &str {
-    path.file_name().and_then(|n| n.to_str()).unwrap_or_default()
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -267,7 +276,15 @@ mod tests {
 
     #[test]
     fn case_id_rejects_malformed() {
-        for bad in ["", "caldat", "caldat-Neq", "a-b-c-Eq", "a-b-eq", "-b-Eq", "a--Eq"] {
+        for bad in [
+            "",
+            "caldat",
+            "caldat-Neq",
+            "a-b-c-Eq",
+            "a-b-eq",
+            "-b-Eq",
+            "a--Eq",
+        ] {
             assert!(bad.parse::<CaseId>().is_err(), "`{bad}` should be rejected");
         }
     }
