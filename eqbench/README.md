@@ -1,7 +1,8 @@
 # eqbench
 
 CLI around the Java programs of [EqBench](https://github.com/shrBadihi/EqBench)
-(`src_data`): 272 pairs of programs, each one identified as `<bench>-<prog>-<Eq|Neq>`.
+(`src_data`): 248 pairs of methods, each one identified as `<bench>-<prog>-<Eq|Neq>`.
+The 24 whole-program pairs (no `J-Desc.json`) are left out.
 
 ## Commands
 
@@ -19,7 +20,7 @@ CLI around the Java programs of [EqBench](https://github.com/shrBadihi/EqBench)
 $ just eqbench build
 $ just eqbench analyse ./my-tool
 ...
-correct predictions: 147/272 (54.0%)
-time: total 2.64 s, mean 9.7 ms, max 12.4 ms (optimization-theta-Neq)
+correct predictions: 135/248 (54.4%)
+time: total 11.49 s, mean 46.3 ms, max 56.3 ms (ran-poidev-Eq)
 errors: 0 timeouts, 0 crashes, 0 invalid outputs, 0 not built
 ```

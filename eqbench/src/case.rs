@@ -127,8 +127,8 @@ pub struct Case {
     pub dir: PathBuf,
     pub old: PathBuf,
     pub new: PathBuf,
-    /// Content of `J-Desc.json`, missing for the whole-program cases.
-    pub desc: Option<Desc>,
+    /// Content of `J-Desc.json`.
+    pub desc: Desc,
 }
 
 impl Case {
@@ -152,6 +152,8 @@ impl Dataset {
     ///
     /// The layout is `<root>/<bench>/<prog>/<Eq|Neq>/{oldV,newV}.java`.
     /// Only the Java files are considered, the C versions are ignored.
+    /// The whole-program cases (`airy/airy`, `tcas/tcas`, ...) are left out:
+    /// they have no `J-Desc.json`, hence no method to compare.
     pub fn load(root: &Path) -> Result<Self> {
         let mut cases = Vec::new();
         for bench_dir in subdirs(root)? {
@@ -222,11 +224,11 @@ fn load_case(dir: &Path) -> Result<Option<Case>> {
         ),
     }
     let desc_file = dir.join(DESC_FILE);
-    let desc = if desc_file.is_file() {
-        Some(Desc::load(&desc_file)?)
-    } else {
-        None
-    };
+    if !desc_file.is_file() {
+        // Whole-program case.
+        return Ok(None);
+    }
+    let desc = Desc::load(&desc_file)?;
     let prog_dir = dir.parent().context("case directory has no parent")?;
     let bench_dir = prog_dir
         .parent()

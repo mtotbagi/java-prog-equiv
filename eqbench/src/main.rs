@@ -218,7 +218,7 @@ fn list(dataset: &Dataset) -> Result<()> {
     let method_width = dataset
         .cases
         .iter()
-        .filter_map(|c| c.desc.as_ref().map(|d| d.method.len()))
+        .map(|c| c.desc.method.len())
         .max()
         .unwrap_or(0)
         .max("METHOD".len());
@@ -232,21 +232,13 @@ fn list(dataset: &Dataset) -> Result<()> {
         "CHANGES"
     );
     for case in &dataset.cases {
-        let (method, loc, changes) = match &case.desc {
-            Some(desc) => (
-                desc.method.as_str(),
-                desc.loc.to_string(),
-                desc.changes.len().to_string(),
-            ),
-            None => ("-", "-".to_string(), "-".to_string()),
-        };
         outln!(
             "{:width$}  {:4}  {:method_width$}  {:>4}  {:>7}",
             case.id.to_string(),
             case.id.kind,
-            method,
-            loc,
-            changes
+            case.desc.method,
+            case.desc.loc,
+            case.desc.changes.len()
         );
     }
 
@@ -272,29 +264,25 @@ fn details(dataset: &Dataset, case: &Case) -> Result<()> {
     };
     outln!("{} ({verdict})", style.bold(&case.id.to_string()));
 
-    match &case.desc {
-        None => outln!("{}", style.dim("no J-Desc.json for this case")),
-        Some(desc) => {
-            outln!("method           {}", desc.method);
-            outln!("LOC              {}", desc.loc);
-            outln!("loops            {}", desc.loops);
-            outln!("non-linear       {}", desc.non_linear);
-            for (i, change) in desc.changes.iter().enumerate() {
-                let label = if i == 0 { "changes" } else { "" };
-                let lines: Vec<String> = change.lines.iter().map(|l| l.to_string()).collect();
-                outln!(
-                    "{label:16} line {:8} {:7} {}",
-                    lines.join(","),
-                    change.kind.to_string(),
-                    change.operation
-                );
-            }
-            if let Some(params) = &desc.counter_example {
-                for (i, param) in params.iter().enumerate() {
-                    let label = if i == 0 { "counter-example" } else { "" };
-                    outln!("{label:16} {param}");
-                }
-            }
+    let desc = &case.desc;
+    outln!("method           {}", desc.method);
+    outln!("LOC              {}", desc.loc);
+    outln!("loops            {}", desc.loops);
+    outln!("non-linear       {}", desc.non_linear);
+    for (i, change) in desc.changes.iter().enumerate() {
+        let label = if i == 0 { "changes" } else { "" };
+        let lines: Vec<String> = change.lines.iter().map(|l| l.to_string()).collect();
+        outln!(
+            "{label:16} line {:8} {:7} {}",
+            lines.join(","),
+            change.kind.to_string(),
+            change.operation
+        );
+    }
+    if let Some(params) = &desc.counter_example {
+        for (i, param) in params.iter().enumerate() {
+            let label = if i == 0 { "counter-example" } else { "" };
+            outln!("{label:16} {param}");
         }
     }
     outln!();

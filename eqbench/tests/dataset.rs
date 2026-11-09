@@ -21,9 +21,10 @@ fn discovers_every_java_case() {
         .iter()
         .filter(|c| c.id.kind == Kind::Neq)
         .count();
-    assert_eq!(dataset.cases.len(), 272);
-    assert_eq!(eq, 147);
-    assert_eq!(neq, 125);
+    // 272 pairs, without the 24 whole-program ones (12 Eq, 12 Neq).
+    assert_eq!(dataset.cases.len(), 248);
+    assert_eq!(eq, 135);
+    assert_eq!(neq, 113);
     assert!(
         dataset
             .cases
@@ -48,19 +49,11 @@ fn case_ids_are_unique_and_parse_back() {
 #[test]
 fn parses_every_description() {
     let dataset = dataset();
-    let with_desc: Vec<_> = dataset
-        .cases
-        .iter()
-        .filter_map(|c| c.desc.as_ref())
-        .collect();
-    assert_eq!(with_desc.len(), 248);
-    assert!(with_desc.iter().all(|d| !d.changes.is_empty()));
-
-    // Only non-equivalent cases come with a counter-example.
     for case in &dataset.cases {
-        if let Some(desc) = &case.desc
-            && desc.counter_example.is_some()
-        {
+        assert!(!case.desc.method.is_empty(), "{}", case.id);
+        assert!(!case.desc.changes.is_empty(), "{}", case.id);
+        // Only non-equivalent cases come with a counter-example.
+        if case.desc.counter_example.is_some() {
             assert_eq!(case.id.kind, Kind::Neq, "{}", case.id);
         }
     }
@@ -90,6 +83,6 @@ fn staged_sources_declare_their_own_package_and_class() {
             );
         }
     }
-    // 12 wrong packages and 1 wrong class name in the dataset.
-    assert_eq!(fixed, 13);
+    // 10 wrong packages and 1 wrong class name in the dataset.
+    assert_eq!(fixed, 11);
 }
