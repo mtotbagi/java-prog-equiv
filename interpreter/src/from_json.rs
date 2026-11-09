@@ -31,15 +31,22 @@ impl FromJson for i32 {
 impl FromJson for StackValue {
     fn from_json(json: &Value) -> Self {
         if json.is_null() {
-            return Self::Ref(None);
+            return Self::Ref(
+                None,
+                z3::ast::Bool::from_bool(false),
+                z3::ast::BV::from_u64(0, 32),
+            );
         }
 
         let Value::String(s) = &json["type"] else {
             panic!("Invalid json {}", json)
         };
         match s.as_str() {
-            "int" => Self::Int(i32::from_json(&json["value"])),
-            "integer" => Self::Int(i32::from_json(&json["value"])),
+            "int" | "integer" => {
+                let val = i32::from_json(&json["value"]);
+                let ast = z3::ast::BV::from_i64(val as i64, 32);
+                Self::Int(val, ast)
+            }
             "float" => todo!(),
             "ref" => todo!(),
             _ => panic!("Invalid json {}", json),
@@ -67,9 +74,9 @@ impl FromJson for SimpleType {
         if let Value::String(kind) = &json["kind"] {
             match kind.as_str() {
                 "array" => {
-                    return SimpleType::SimpleRef(Box::new(SimpleRef::Array {
-                        ty: SimpleType::from_json(&json["type"]),
-                    }));
+                    return SimpleType::SimpleRef(SimpleRef::Array {
+                        ty: SimpleType::from_json(&json["type"]).to_array_type(),
+                    });
                 }
                 _ => todo!(),
             }
@@ -100,9 +107,9 @@ impl FromJson for Option<SimpleType> {
         if let Value::String(kind) = &json["kind"] {
             match kind.as_str() {
                 "array" => {
-                    return Some(SimpleType::SimpleRef(Box::new(SimpleRef::Array {
-                        ty: SimpleType::from_json(&json["type"]),
-                    })));
+                    return Some(SimpleType::SimpleRef(SimpleRef::Array {
+                        ty: SimpleType::from_json(&json["type"]).to_array_type(),
+                    }));
                 }
                 _ => todo!(),
             }
@@ -205,14 +212,14 @@ impl FromJson for Instruction {
             },
             "newarray" => Self::NewArray {
                 dim: u32::from_json(&json["dim"]),
-                ty: SimpleType::from_json(&json["type"]),
+                ty: SimpleType::from_json(&json["type"]).to_array_type(),
             },
             "array_store" => Self::ArrayStore {
-                ty: SimpleType::from_json(&json["type"]),
+                ty: SimpleType::from_json(&json["type"]).to_array_type(),
             },
             "arraylength" => Self::ArrayLength,
             "array_load" => Self::ArrayLoad {
-                ty: SimpleType::from_json(&json["type"]),
+                ty: SimpleType::from_json(&json["type"]).to_array_type(),
             },
             "incr" => Self::Incr {
                 index: u32::from_json(&json["index"]),

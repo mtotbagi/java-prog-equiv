@@ -40,6 +40,7 @@
             rustToolchain
             cargo-machete
             cargo-nextest
+            z3
 
             just
             alejandra

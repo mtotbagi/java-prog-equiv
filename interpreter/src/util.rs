@@ -25,3 +25,11 @@ pub fn read_json(classname: &str) -> Value {
 pub fn empty_input() -> (Vec<StackValue>, Heap) {
     (vec![], Heap { heap: vec![] })
 }
+
+pub fn z3_true() -> z3::ast::Bool {
+    z3::ast::Bool::from_bool(true)
+}
+
+pub fn z3_false() -> z3::ast::Bool {
+    z3::ast::Bool::from_bool(false)
+}

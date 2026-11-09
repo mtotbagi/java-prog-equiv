@@ -8,7 +8,7 @@ impl ToSexp for StackValue {
     fn to_sexp(&self) -> String {
         let mut res = "(".to_string();
         match self {
-            StackValue::Int(i) => {
+            StackValue::Int(i, _) => {
                 res += "int ";
                 res += &i.to_string();
             }
@@ -16,11 +16,11 @@ impl ToSexp for StackValue {
                 res += "float ";
                 res += &f.to_string();
             }
-            StackValue::Ref(Some(r)) => {
+            StackValue::Ref(Some(r), _, _) => {
                 res += "ref ";
                 res += &r.to_string();
             }
-            StackValue::Ref(None) => {
+            StackValue::Ref(None, _, _) => {
                 res += "ref ";
                 res += "null";
             }
@@ -103,7 +103,7 @@ impl ToSexp for State {
 impl ToSexp for ExeResult {
     fn to_sexp(&self) -> String {
         match self {
-            ExeResult::Ok => "ok".to_string(),
+            ExeResult::Ok(_) => "ok".to_string(),
             ExeResult::AssertErr => "\"assertion error\"".to_string(),
             ExeResult::OutOfBounds => "\"out of bounds\"".to_string(),
             ExeResult::NullPointer => "\"null pointer\"".to_string(),

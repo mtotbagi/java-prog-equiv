@@ -17,28 +17,33 @@ impl Interpreter {
         method: &Method,
         input: (Vec<StackValue>, Heap),
         iter: u32,
-    ) -> (Vec<State>, ExeResult) {
+    ) -> (Vec<State>, Vec<z3::ast::Bool>, ExeResult) {
         let pc = ProgramCounter {
             class: self.class.name.clone(),
             method: method.id.clone(),
             idx: 0,
         };
         let mut state = State::new(pc.clone(), input.0, input.1);
+        let mut path = vec![];
         let mut states = vec![state.clone()];
         for _ in 0..iter {
-            let res = self.step(state);
-            state = match res {
-                Either::State(state) => {
-                    states.push(state.clone());
-                    state
+            let (outcome, constraint) = self.step(state);
+            if let Some(constraint) = constraint {
+                path.push(constraint);
+            }
+
+            match outcome {
+                Either::State(next_state) => {
+                    states.push(next_state.clone());
+                    state = next_state;
                 }
-                Either::Result(exe_result) => return (states, exe_result),
+                Either::Result(exe_result) => return (states, path, exe_result),
             }
         }
-        (states, ExeResult::DidNotFinish)
+        (states, path, ExeResult::DidNotFinish)
     }
 
-    fn step(&self, mut state: State) -> Either {
+    fn step(&self, mut state: State) -> (Either, Option<z3::ast::Bool>) {
         let Some(mut cur_frame) = state.frames.pop() else {
             panic!("Empty state!")
         };
@@ -53,21 +58,36 @@ impl Interpreter {
         dbg!(&bytecode[cur_frame.pc()]);
         match &bytecode[cur_frame.pc()] {
             Instruction::Load { ty, index } => cur_frame.load(*ty, *index),
-            Instruction::Push { value } => cur_frame.push(*value),
+            Instruction::Push { value } => cur_frame.push(value.clone()),
             Instruction::Dup { words } => cur_frame.dup(*words),
-            Instruction::Throw => return Either::Result(AssertErr),
+            Instruction::Throw => return (Either::Result(AssertErr), None),
             Instruction::Ifz { cond, target } => {
-                let i = match cur_frame.stack.pop() {
-                    Some(StackValue::Int(i)) => i as i64,
-                    Some(StackValue::Ref(Some(i))) => i as i64,
-                    Some(StackValue::Ref(None)) => 0,
+                let (real_bool, sym_bool) = match cur_frame.stack.pop() {
+                    Some(StackValue::Int(i, bv)) => (
+                        cond.cmp_i32(i, 0),
+                        Some(cond.cmp_z3_signed(&bv, &z3::ast::BV::from_i64(0, 32))),
+                    ),
+                    Some(StackValue::Ref(r, sym_is_null, sym_bv)) => (
+                        cond.cmp_ref(r, None),
+                        Some(cond.cmp_z3_ref(
+                            (&sym_is_null, &sym_bv),
+                            (
+                                &z3::ast::Bool::from_bool(false),
+                                &z3::ast::BV::from_u64(0, 32),
+                            ),
+                        )),
+                    ),
                     Some(_) => panic!(),
                     None => panic!(),
                 };
-                if cond.cmp_with(i, 0) {
+                if real_bool {
                     cur_frame.set_pc(*target);
                     state.frames.push(cur_frame);
-                    return Either::State(state);
+                    return (Either::State(state), sym_bool);
+                } else {
+                    cur_frame.increment_pc();
+                    state.frames.push(cur_frame);
+                    return (Either::State(state), sym_bool.map(|b| b.not()));
                 }
             }
             Instruction::Store { ty, index } => cur_frame.store(*ty, *index),
@@ -83,20 +103,30 @@ impl Interpreter {
                         assert!(*ty == value.get_type());
                         old_frame.push(value);
                     }
-                    return Either::State(state);
+                    return (Either::State(state), None);
                 } else {
-                    return Either::Result(Ok);
+                    if cur_frame.program_counter.method.ret_ty.is_some() {
+                        let value = cur_frame.stack.pop().expect("Stack shouldn't be empty!");
+                        return (Either::Result(Ok(Some(value))), None);
+                    } else {
+                        return (Either::Result(Ok(None)), None);
+                    }
                 }
             }
             Instruction::Get => {
                 // TODO handle other cases than assertionsDisabled = false
-                cur_frame.stack.push(StackValue::Int(0));
+                cur_frame
+                    .stack
+                    .push(StackValue::Int(0, z3::ast::BV::from_i64(0, 32)));
                 dbg!(&cur_frame.stack);
             }
             Instruction::New { class } => {
-                cur_frame
-                    .stack
-                    .push(StackValue::Ref(Some(state.heap.heap.len() as u32)));
+                let idx = state.heap.heap.len();
+                cur_frame.stack.push(StackValue::Ref(
+                    Some(idx as u32),
+                    z3_true(),
+                    z3::ast::BV::from_u64(idx as u64, 32),
+                ));
                 state.heap.heap.push(HeapValue::Object {
                     name: class.clone(),
                     fields: HashMap::new(),
@@ -139,52 +169,66 @@ impl Interpreter {
                     cur_frame.increment_pc();
                     state.frames.push(cur_frame);
                     state.frames.push(new_frame);
-                    return Either::State(state);
+                    return (Either::State(state), None);
                 }
             }
             Instruction::Binary { op, ty } => match ty {
                 StackType::Int => {
-                    let Some(StackValue::Int(rhs)) = cur_frame.stack.pop() else {
+                    let Some(StackValue::Int(rhs, rhs_bv)) = cur_frame.stack.pop() else {
                         panic!()
                     };
-                    let Some(StackValue::Int(lhs)) = cur_frame.stack.pop() else {
+                    let Some(StackValue::Int(lhs, lhs_bv)) = cur_frame.stack.pop() else {
                         panic!()
                     };
                     dbg!(lhs, rhs);
                     match op.op_int(lhs, rhs) {
-                        Some(result) => cur_frame.stack.push(StackValue::Int(result)),
-                        None => return Either::Result(Div0),
+                        Some(result) => {
+                            cur_frame
+                                .stack
+                                .push(StackValue::Int(result, op.op_z3(&lhs_bv, &rhs_bv)));
+                            cur_frame.increment_pc();
+                            state.frames.push(cur_frame);
+                            return (Either::State(state), Some(rhs_bv.ne(0)));
+                        }
+                        None => return (Either::Result(Div0), Some(rhs_bv.eq(0))),
                     }
                 }
                 StackType::Float => todo!(),
                 StackType::Ref => panic!("Cannot use ref for arithmetic operations!"),
             },
             Instruction::If { cond, target } => {
-                let rhs = match cur_frame.stack.pop() {
-                    Some(StackValue::Int(i)) => i as i64,
-                    Some(StackValue::Ref(Some(i))) => i as i64,
-                    Some(StackValue::Ref(None)) => -1,
-                    Some(_) => panic!(),
-                    None => panic!(),
-                };
-                let lhs = match cur_frame.stack.pop() {
-                    Some(StackValue::Int(i)) => i as i64,
-                    Some(StackValue::Ref(Some(i))) => i as i64,
-                    Some(StackValue::Ref(None)) => -1,
-                    Some(_) => panic!(),
-                    None => panic!(),
+                let rhs = cur_frame.stack.pop().unwrap();
+                let lhs = cur_frame.stack.pop().unwrap();
+                let (real_bool, sym_bool) = match (lhs, rhs) {
+                    (StackValue::Int(lhs, lhs_bv), StackValue::Int(rhs, rhs_bv)) => (
+                        cond.cmp_i32(lhs, rhs),
+                        Some(cond.cmp_z3_signed(&lhs_bv, &rhs_bv)),
+                    ),
+                    (
+                        StackValue::Ref(lhs, lhs_is_null, lhs_bv),
+                        StackValue::Ref(rhs, rhs_is_null, rhs_bv),
+                    ) => (
+                        cond.cmp_ref(lhs, rhs),
+                        Some(cond.cmp_z3_ref((&lhs_is_null, &lhs_bv), (&rhs_is_null, &rhs_bv))),
+                    ),
+                    (StackValue::Float(_), StackValue::Float(_)) => todo!(),
+                    _ => panic!("Cannot compare different types"),
                 };
 
-                if cond.cmp_with(lhs, rhs) {
+                if real_bool {
                     cur_frame.set_pc(*target);
                     state.frames.push(cur_frame);
-                    return Either::State(state);
+                    return (Either::State(state), sym_bool);
+                } else {
+                    cur_frame.increment_pc();
+                    state.frames.push(cur_frame);
+                    return (Either::State(state), sym_bool.map(|b| b.not()));
                 }
             }
             Instruction::Goto { target } => {
                 cur_frame.set_pc(*target);
                 state.frames.push(cur_frame);
-                return Either::State(state);
+                return (Either::State(state), None);
             }
             Instruction::Placeholder => todo!(),
             Instruction::NewArray { dim, ty } => {
@@ -196,47 +240,26 @@ impl Interpreter {
                     todo!("Only one dimensional arrays are supported currently!");
                 }
 
-                let len = if let StackValue::Int(x) = cur_frame.stack.pop().unwrap() {
-                    x as usize
-                } else {
-                    panic!("Invalid array length!")
-                };
+                let len = cur_frame.stack.pop().unwrap();
 
-                // 0 as default
-                let arr = match ty {
-                    SimpleType::Int => {
-                        vec![HeapValue::Int(0); len]
-                    }
-                    SimpleType::Float => {
-                        vec![HeapValue::Float(0.0); len]
-                    }
-                    SimpleType::Byte => {
-                        vec![HeapValue::Byte(0); len]
-                    }
-                    SimpleType::Char => {
-                        vec![HeapValue::Char(0); len]
-                    }
-                    SimpleType::Short => {
-                        vec![HeapValue::Short(0); len]
-                    }
-                    SimpleType::Boolean => todo!(),
-                    SimpleType::SimpleRef(_) => todo!(),
-                };
-
-                cur_frame
-                    .stack
-                    .push(StackValue::Ref(Some(state.heap.heap.len() as u32)));
-                state.heap.heap.push(HeapValue::Array {
-                    ty: ty.clone(),
-                    values: arr,
-                });
+                let idx = state.heap.heap.len();
+                cur_frame.stack.push(StackValue::Ref(
+                    Some(idx as u32),
+                    z3_true(),
+                    z3::ast::BV::from_u64(idx as u64, 32),
+                ));
+                state
+                    .heap
+                    .heap
+                    .push(HeapValue::Array(Array::new_zero(*ty, len)));
             }
             Instruction::ArrayStore { ty: _ } => {
                 let val = cur_frame
                     .stack
                     .pop()
                     .expect("[ArraySotre]: value not on stack");
-                let StackValue::Int(idx) = cur_frame
+                // TODO when adding symbolic arrays, use the val_bv to set the symbolic value in the array
+                let StackValue::Int(idx, idx_bv) = cur_frame
                     .stack
                     .pop()
                     .expect("[ArraySotre]: index not on stack")
@@ -244,31 +267,55 @@ impl Interpreter {
                     panic!("Expected an Int");
                 };
 
-                let StackValue::Ref(arr_ref) = cur_frame
+                let StackValue::Ref(arr_ref, sym_is_valid, _) = cur_frame
                     .stack
                     .pop()
                     .expect("[ArraySotre]: arrayref not on stack")
                 else {
                     panic!("Expected a Ref");
                 };
-
+                let is_null_pointer = sym_is_valid.eq(z3_false());
                 let Some(arr) = arr_ref else {
-                    return Either::Result(NullPointer);
+                    return (Either::Result(NullPointer), Some(is_null_pointer));
                 };
 
-                if let HeapValue::Array { ty: _, values } = &mut state.heap.heap[arr as usize] {
-                    // TODO: check type
-                    if idx as usize >= values.len() {
-                        return Either::Result(OutOfBounds);
-                    }
-
-                    values[idx as usize] = val.to_heap_value();
-                } else {
+                let HeapValue::Array(Array {
+                    ty,
+                    values,
+                    symbolic,
+                    len,
+                }) = &mut state.heap.heap[arr as usize]
+                else {
                     panic!("Not array ref");
+                };
+                let is_out_of_bounds = z3::ast::Bool::or(&[idx_bv.bvslt(0), idx_bv.bvsge(&*len)]);
+                // TODO: check type
+                if idx as usize >= values.len() {
+                    return (
+                        Either::Result(OutOfBounds),
+                        Some(z3::ast::Bool::and(&[
+                            is_null_pointer.not(),
+                            is_out_of_bounds,
+                        ])),
+                    );
                 }
+
+                let array_val = val.to_array_value(*ty);
+                *symbolic = symbolic.store(&idx_bv, &array_val.z3());
+                values[idx as usize] = array_val;
+
+                cur_frame.increment_pc();
+                state.frames.push(cur_frame);
+                return (
+                    Either::State(state),
+                    Some(z3::ast::Bool::and(&[
+                        is_null_pointer.not(),
+                        is_out_of_bounds.not(),
+                    ])),
+                );
             }
             Instruction::ArrayLength => {
-                let StackValue::Ref(arr_ref) = cur_frame
+                let StackValue::Ref(arr_ref, sym_is_valid, _) = cur_frame
                     .stack
                     .pop()
                     .expect("[ArraySotre]: arrayref not on stack")
@@ -277,17 +324,29 @@ impl Interpreter {
                 };
 
                 let Some(arr) = arr_ref else {
-                    return Either::Result(NullPointer);
+                    return (
+                        Either::Result(NullPointer),
+                        Some(sym_is_valid.eq(z3_false())),
+                    );
                 };
 
-                if let HeapValue::Array { values, .. } = &state.heap.heap[arr as usize] {
-                    cur_frame.push(StackValue::Int(values.len() as i32));
+                if let HeapValue::Array(Array { values, .. }) = &state.heap.heap[arr as usize] {
+                    // TODO change to symbolic length when adding symbolic arrays
+                    cur_frame.push(StackValue::Int(
+                        values.len() as i32,
+                        z3::ast::BV::fresh_const("int", 32),
+                    ));
                 } else {
                     panic!("Not array ref");
                 }
+
+                cur_frame.increment_pc();
+                state.frames.push(cur_frame);
+                return (Either::State(state), Some(sym_is_valid.eq(z3_true())));
             }
             Instruction::ArrayLoad { ty: _ } => {
-                let StackValue::Int(idx) = cur_frame
+                // TODO when adding symbolic arrays, use the idx_bv to get the symbolic value from the array
+                let StackValue::Int(idx, idx_bv) = cur_frame
                     .stack
                     .pop()
                     .expect("[ArrayLoad]: index not on stack")
@@ -295,33 +354,55 @@ impl Interpreter {
                     panic!("Expected an Int");
                 };
 
-                let StackValue::Ref(arr_ref) = cur_frame
+                let StackValue::Ref(arr_ref, sym_is_valid, _) = cur_frame
                     .stack
                     .pop()
-                    .expect("[ArrayLoad]: arrayref not on stack")
+                    .expect("[ArraySotre]: arrayref not on stack")
                 else {
                     panic!("Expected a Ref");
                 };
 
+                let is_null_pointer = sym_is_valid.eq(z3_false());
                 let Some(arr) = arr_ref else {
-                    return Either::Result(NullPointer);
+                    return (Either::Result(NullPointer), Some(is_null_pointer));
                 };
 
-                if let HeapValue::Array { values, .. } = &state.heap.heap[arr as usize] {
-                    if idx as usize >= values.len() {
-                        return Either::Result(OutOfBounds);
-                    }
-
-                    cur_frame.push(values[idx as usize].to_stack_value());
-                } else {
+                let HeapValue::Array(Array {
+                    ty: _,
+                    values,
+                    symbolic,
+                    len,
+                }) = &mut state.heap.heap[arr as usize]
+                else {
                     panic!("Not array ref");
+                };
+                let is_out_of_bounds = z3::ast::Bool::or(&[idx_bv.bvslt(0), idx_bv.bvsge(&*len)]);
+
+                if idx as usize >= values.len() {
+                    return (
+                        Either::Result(OutOfBounds),
+                        Some(z3::ast::Bool::and(&[sym_is_valid.eq(z3_true())])),
+                    );
                 }
+                let sym_val = symbolic.select(&idx_bv);
+                cur_frame.push(values[idx as usize].swap_sym_val(sym_val).to_stack_value());
+                cur_frame.increment_pc();
+                state.frames.push(cur_frame);
+                return (
+                    Either::State(state),
+                    Some(z3::ast::Bool::and(&[
+                        is_null_pointer.not(),
+                        is_out_of_bounds.not(),
+                    ])),
+                );
             }
             Instruction::Incr { index, amount } => {
-                let StackValue::Int(local) = cur_frame.locals[*index as usize].unwrap() else {
+                let StackValue::Int(local, bv) = cur_frame.locals[*index as usize].clone().unwrap()
+                else {
                     panic!("Local must be an int, local: {}", index);
                 };
-                cur_frame.locals[*index as usize] = Some(StackValue::Int(local + *amount));
+                cur_frame.locals[*index as usize] =
+                    Some(StackValue::Int(local + *amount, bv.bvadd(*amount)));
             }
             Instruction::Neg { ty } => {
                 let Some(value) = cur_frame.stack.pop() else {
@@ -329,9 +410,9 @@ impl Interpreter {
                 };
                 assert!(*ty == value.get_type());
                 let res = match value {
-                    StackValue::Int(v) => StackValue::Int(-v),
+                    StackValue::Int(v, bv) => StackValue::Int(-v, bv.bvneg()),
                     StackValue::Float(v) => StackValue::Float(-v),
-                    StackValue::Ref(_) => panic!(),
+                    StackValue::Ref(_, _, _) => panic!(),
                 };
                 cur_frame.push(res);
             }
@@ -339,6 +420,6 @@ impl Interpreter {
         }
         cur_frame.increment_pc();
         state.frames.push(cur_frame);
-        Either::State(state)
+        (Either::State(state), None)
     }
 }

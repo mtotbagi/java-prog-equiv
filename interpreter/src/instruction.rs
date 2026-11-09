@@ -1,6 +1,7 @@
 use crate::{
+    ArrayType,
     java_class::MethodId,
-    java_types::{SimpleRef, SimpleType, StackType, StackValue},
+    java_types::{SimpleRef, StackType, StackValue},
 };
 
 #[derive(Clone, Debug)]
@@ -53,14 +54,14 @@ pub enum Instruction {
     Placeholder,
     NewArray {
         dim: u32,
-        ty: SimpleType,
+        ty: ArrayType,
     },
     ArrayStore {
-        ty: SimpleType, // Technically JArrayType
+        ty: ArrayType,
     },
     ArrayLength,
     ArrayLoad {
-        ty: SimpleType, // Technically JArrayType
+        ty: ArrayType,
     },
     Incr {
         index: u32,
@@ -88,6 +89,16 @@ impl Op {
             Op::Rem => Some(lhs.wrapping_rem(rhs)),
         }
     }
+
+    pub fn op_z3(&self, lhs: &z3::ast::BV, rhs: &z3::ast::BV) -> z3::ast::BV {
+        match self {
+            Op::Add => lhs.bvadd(rhs),
+            Op::Sub => lhs.bvsub(rhs),
+            Op::Mul => lhs.bvmul(rhs),
+            Op::Div => lhs.bvsdiv(rhs),
+            Op::Rem => lhs.bvsrem(rhs),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -112,7 +123,7 @@ pub enum Cond {
 }
 
 impl Cond {
-    pub fn cmp_with(&self, lhs: i64, rhs: i64) -> bool {
+    pub fn cmp_i32(&self, lhs: i32, rhs: i32) -> bool {
         match self {
             Cond::Ne => lhs != rhs,
             Cond::Eq => lhs == rhs,
@@ -122,6 +133,44 @@ impl Cond {
             Cond::Ge => lhs >= rhs,
             Cond::Is => lhs == rhs,
             Cond::IsNot => lhs != rhs,
+        }
+    }
+
+    pub fn cmp_ref(&self, lhs: Option<u32>, rhs: Option<u32>) -> bool {
+        match self {
+            Cond::Is => lhs == rhs,
+            Cond::IsNot => lhs != rhs,
+            _ => panic!("Invalid condition for references!"),
+        }
+    }
+
+    pub fn cmp_z3_ref(
+        &self,
+        lhs: (&z3::ast::Bool, &z3::ast::BV),
+        rhs: (&z3::ast::Bool, &z3::ast::BV),
+    ) -> z3::ast::Bool {
+        match self {
+            Cond::Is => z3::ast::Bool::and(&[
+                lhs.0.eq(rhs.0),
+                lhs.0
+                    .eq(z3::ast::Bool::from_bool(true))
+                    .implies(lhs.1.eq(rhs.1)),
+            ]),
+            Cond::IsNot => Cond::Is.cmp_z3_ref(lhs, rhs).not(),
+            _ => panic!("Invalid condition"),
+        }
+    }
+
+    pub fn cmp_z3_signed(&self, lhs: &z3::ast::BV, rhs: &z3::ast::BV) -> z3::ast::Bool {
+        match self {
+            Cond::Ne => lhs.ne(rhs),
+            Cond::Eq => lhs.eq(rhs),
+            Cond::Lt => lhs.bvslt(rhs),
+            Cond::Le => lhs.bvsle(rhs),
+            Cond::Gt => lhs.bvsgt(rhs),
+            Cond::Ge => lhs.bvsge(rhs),
+            Cond::Is => lhs.eq(rhs),
+            Cond::IsNot => lhs.ne(rhs),
         }
     }
 }
