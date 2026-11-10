@@ -85,8 +85,8 @@ impl Op {
             Op::Add => Some(lhs.wrapping_add(rhs)),
             Op::Sub => Some(lhs.wrapping_sub(rhs)),
             Op::Mul => Some(lhs.wrapping_mul(rhs)),
-            Op::Div => lhs.checked_div(rhs),
-            Op::Rem => Some(lhs.wrapping_rem(rhs)),
+            Op::Div => (rhs != 0).then(|| lhs.wrapping_div(rhs)),
+            Op::Rem => (rhs != 0).then(|| lhs.wrapping_rem(rhs)),
         }
     }
 
