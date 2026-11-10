@@ -13,3 +13,7 @@ z3 = "0.22.0"
 [[bin]]
 name = "interpreter"
 path = "src/bin/main.rs"
+
+[[bin]]
+name = "analyzer"
+path = "src/bin/analyzer.rs"
