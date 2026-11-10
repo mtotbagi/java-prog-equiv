@@ -181,6 +181,8 @@ impl Interpreter {
                         panic!()
                     };
                     dbg!(lhs, rhs);
+                    // Only add contraint if division can fail
+                    let can_div0 = matches!(op, Op::Div | Op::Rem);
                     match op.op_int(lhs, rhs) {
                         Some(result) => {
                             cur_frame
@@ -188,7 +190,7 @@ impl Interpreter {
                                 .push(StackValue::Int(result, op.op_z3(&lhs_bv, &rhs_bv)));
                             cur_frame.increment_pc();
                             state.frames.push(cur_frame);
-                            return (Either::State(state), Some(rhs_bv.ne(0)));
+                            return (Either::State(state), can_div0.then(|| rhs_bv.ne(0)));
                         }
                         None => return (Either::Result(Div0), Some(rhs_bv.eq(0))),
                     }
@@ -330,11 +332,11 @@ impl Interpreter {
                     );
                 };
 
-                if let HeapValue::Array(Array { values, .. }) = &state.heap.heap[arr as usize] {
+                if let HeapValue::Array(Array { values, len, .. }) = &state.heap.heap[arr as usize] {
                     // TODO change to symbolic length when adding symbolic arrays
                     cur_frame.push(StackValue::Int(
                         values.len() as i32,
-                        z3::ast::BV::fresh_const("int", 32),
+                        len.clone(),
                     ));
                 } else {
                     panic!("Not array ref");
@@ -381,7 +383,10 @@ impl Interpreter {
                 if idx as usize >= values.len() {
                     return (
                         Either::Result(OutOfBounds),
-                        Some(z3::ast::Bool::and(&[sym_is_valid.eq(z3_true())])),
+                        Some(z3::ast::Bool::and(&[
+                            is_null_pointer.not(),
+                            is_out_of_bounds,
+                        ])),
                     );
                 }
                 let sym_val = symbolic.select(&idx_bv);
@@ -402,7 +407,7 @@ impl Interpreter {
                     panic!("Local must be an int, local: {}", index);
                 };
                 cur_frame.locals[*index as usize] =
-                    Some(StackValue::Int(local + *amount, bv.bvadd(*amount)));
+                    Some(StackValue::Int(local.wrapping_add(*amount), bv.bvadd(*amount)));
             }
             Instruction::Neg { ty } => {
                 let Some(value) = cur_frame.stack.pop() else {
