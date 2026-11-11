@@ -1,5 +1,9 @@
 use std::collections::HashMap;
 
+use z3::ast::Dynamic;
+
+use crate::Heap;
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum StackValue {
     Int(i32, z3::ast::BV),
@@ -34,6 +38,20 @@ impl StackValue {
             }
             (StackValue::Float(f), ArrayType::Float) => ArrayValue::Float(*f),
             _ => panic!("Cannot convert {:?} to {:?}", self, ty),
+        }
+    }
+
+    pub fn symbolic_values(&self, heap: &Heap) -> Vec<Dynamic> {
+        match self {
+            StackValue::Int(_, bv) => vec![Dynamic::from_ast(bv)],
+            StackValue::Ref(r, bool, bv) => {
+                let mut res = vec![Dynamic::from_ast(bool), Dynamic::from_ast(bv)];
+                if let Some(r) = *r {
+                    res.append(&mut heap.heap[r as usize].symbolic_values(heap));
+                }
+                res
+            }
+            StackValue::Float(_) => vec![],
         }
     }
 }
@@ -114,9 +132,36 @@ impl HeapValue {
         }
     }
 
-    pub fn symbolic_values(&self) -> Vec<z3::ast::Dynamic> {
+    pub fn symbolic_values(&self, heap: &Heap) -> Vec<z3::ast::Dynamic> {
         // Important: deterministic order!!!
-        todo!()
+        match self {
+            HeapValue::Int(_, bv) => vec![Dynamic::from_ast(bv)],
+            HeapValue::Ref(r, bool, bv) => {
+                let mut res = vec![Dynamic::from_ast(bool), Dynamic::from_ast(bv)];
+                if let Some(r) = *r {
+                    res.append(&mut heap.heap[r as usize].symbolic_values(heap));
+                }
+                res
+            }
+            HeapValue::Float(_) => vec![],
+            HeapValue::Byte(_, bv) => vec![Dynamic::from_ast(bv)],
+            HeapValue::Char(_, bv) => vec![Dynamic::from_ast(bv)],
+            HeapValue::Short(_, bv) => vec![Dynamic::from_ast(bv)],
+            HeapValue::Boolean(_, bv) => vec![Dynamic::from_ast(bv)],
+            HeapValue::Array(array) => vec![
+                Dynamic::from_ast(&array.symbolic),
+                Dynamic::from_ast(&array.len),
+            ],
+            HeapValue::Object { name: _, fields } => {
+                let mut keys: Vec<_> = fields.keys().collect();
+                keys.sort();
+                let mut res = vec![];
+                for key in keys {
+                    res.append(&mut fields[key].symbolic_values(heap));
+                }
+                res
+            }
+        }
     }
 }
 
