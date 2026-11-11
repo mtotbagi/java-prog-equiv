@@ -15,10 +15,12 @@ fn main() {
 
     let method = class
         .get_method(&methodname)
-        .expect(&format!(
-            "Method {} should be implemented on {}",
-            methodname, classname
-        ))
+        .unwrap_or_else(|| {
+            panic!(
+                "Method {} should be implemented on {}",
+                methodname, classname
+            )
+        })
         .clone();
     if method
         .id
@@ -26,15 +28,13 @@ fn main() {
         .iter()
         .any(|param| matches!(param, SimpleType::SimpleRef(_) | SimpleType::Boolean))
     {
-        if !method.id.params.is_empty() {
-            println!("ok;skip");
-            println!("divide by zero;skip");
-            println!("assertion error;skip");
-            println!("out of bounds;skip");
-            println!("null pointer;skip");
-            println!("*;skip");
-            return;
-        }
+        println!("ok;skip");
+        println!("divide by zero;skip");
+        println!("assertion error;skip");
+        println!("out of bounds;skip");
+        println!("null pointer;skip");
+        println!("*;skip");
+        return;
     }
 
     let mut pred = Prediction {
@@ -47,7 +47,7 @@ fn main() {
     };
 
     let executor = ConcolicExecutor::new(class);
-    let res = executor.run(&method, 1000, 1000);
+    let res = executor.run(&method, 1000, 100);
     use std::collections::HashSet;
     use std::mem::discriminant;
     dbg!(res.clone());
@@ -55,7 +55,7 @@ fn main() {
     let mut seen = HashSet::new();
     let unique: Vec<ExeResult> = res
         .into_iter()
-        .map(|(_,_,exe_res)| exe_res)
+        .map(|(_, _, exe_res)| exe_res)
         .filter(|x| seen.insert(discriminant(x)))
         .collect();
     for res in unique {
@@ -75,7 +75,6 @@ fn main() {
     }
     println!("{}", pred)
 }
-
 
 struct Prediction {
     ok: String,
