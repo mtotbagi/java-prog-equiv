@@ -260,7 +260,6 @@ impl Interpreter {
                     .stack
                     .pop()
                     .expect("[ArraySotre]: value not on stack");
-                // TODO when adding symbolic arrays, use the val_bv to set the symbolic value in the array
                 let StackValue::Int(idx, idx_bv) = cur_frame
                     .stack
                     .pop()
@@ -332,12 +331,9 @@ impl Interpreter {
                     );
                 };
 
-                if let HeapValue::Array(Array { values, len, .. }) = &state.heap.heap[arr as usize] {
-                    // TODO change to symbolic length when adding symbolic arrays
-                    cur_frame.push(StackValue::Int(
-                        values.len() as i32,
-                        len.clone(),
-                    ));
+                if let HeapValue::Array(Array { values, len, .. }) = &state.heap.heap[arr as usize]
+                {
+                    cur_frame.push(StackValue::Int(values.len() as i32, len.clone()));
                 } else {
                     panic!("Not array ref");
                 }
@@ -347,7 +343,6 @@ impl Interpreter {
                 return (Either::State(state), Some(sym_is_valid.eq(z3_true())));
             }
             Instruction::ArrayLoad { ty: _ } => {
-                // TODO when adding symbolic arrays, use the idx_bv to get the symbolic value from the array
                 let StackValue::Int(idx, idx_bv) = cur_frame
                     .stack
                     .pop()
@@ -406,8 +401,10 @@ impl Interpreter {
                 else {
                     panic!("Local must be an int, local: {}", index);
                 };
-                cur_frame.locals[*index as usize] =
-                    Some(StackValue::Int(local.wrapping_add(*amount), bv.bvadd(*amount)));
+                cur_frame.locals[*index as usize] = Some(StackValue::Int(
+                    local.wrapping_add(*amount),
+                    bv.bvadd(*amount),
+                ));
             }
             Instruction::Neg { ty } => {
                 let Some(value) = cur_frame.stack.pop() else {
