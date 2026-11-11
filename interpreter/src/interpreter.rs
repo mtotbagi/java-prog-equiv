@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    state::ExeResult::{AssertErr, Div0, NullPointer, Ok, OutOfBounds},
+    state::ExeResult::{AssertErr, DidNotFinish, Div0, NullPointer, Ok, OutOfBounds},
     *,
 };
 pub struct Interpreter {
@@ -243,6 +243,14 @@ impl Interpreter {
                 }
 
                 let len = cur_frame.stack.pop().unwrap();
+                let StackValue::Int(l, bv) = &len else {
+                    panic!("Invalid stackvalue, should be Int!")
+                };
+                const LIMIT: i32 = 10000;
+                let sym_gt_limit = bv.bvsgt(LIMIT);
+                if *l > LIMIT {
+                    return (Either::Result(DidNotFinish), Some(sym_gt_limit));
+                }
 
                 let idx = state.heap.heap.len();
                 cur_frame.stack.push(StackValue::Ref(
@@ -254,6 +262,10 @@ impl Interpreter {
                     .heap
                     .heap
                     .push(HeapValue::Array(Array::new_zero(*ty, len)));
+
+                cur_frame.increment_pc();
+                state.frames.push(cur_frame);
+                return (Either::State(state), Some(sym_gt_limit.not()));
             }
             Instruction::ArrayStore { ty: _ } => {
                 let val = cur_frame
