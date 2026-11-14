@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use z3::ast::BV;
+
 use crate::{
     state::ExeResult::{AssertErr, DidNotFinish, Div0, NullPointer, Ok, OutOfBounds},
     *,
@@ -58,7 +60,18 @@ impl Interpreter {
         dbg!(&bytecode[cur_frame.pc()]);
         match &bytecode[cur_frame.pc()] {
             Instruction::Load { ty, index } => cur_frame.load(*ty, *index),
-            Instruction::Push { value } => cur_frame.push(value.clone()),
+            Instruction::Push { value } => match value {
+                Constant::Stack(val) => cur_frame.push(val.clone()),
+                Constant::Heap(val) => {
+                    let idx = state.heap.heap.len();
+                    cur_frame.push(StackValue::Ref(
+                        Some(idx as u32),
+                        z3_false(),
+                        BV::from_u64(idx as u64, 32),
+                    ));
+                    state.heap.heap.push(val.clone());
+                }
+            },
             Instruction::Dup { words } => cur_frame.dup(*words),
             Instruction::Throw => return (Either::Result(AssertErr), None),
             Instruction::Ifz { cond, target } => {
@@ -113,7 +126,13 @@ impl Interpreter {
                     }
                 }
             }
-            Instruction::Get => {
+            Instruction::Get {
+                is_static: _,
+                class_name: _,
+                field_name,
+                field_ty: _,
+            } => {
+                assert!(field_name == "$assertionsDisabled");
                 // TODO handle other cases than assertionsDisabled = false
                 cur_frame
                     .stack
@@ -197,6 +216,7 @@ impl Interpreter {
                 }
                 StackType::Float => todo!(),
                 StackType::Ref => panic!("Cannot use ref for arithmetic operations!"),
+                _ => todo!(),
             },
             Instruction::If { cond, target } => {
                 let rhs = cur_frame.stack.pop().unwrap();
@@ -427,10 +447,12 @@ impl Interpreter {
                     StackValue::Int(v, bv) => StackValue::Int(v.wrapping_neg(), bv.bvneg()),
                     StackValue::Float(v) => StackValue::Float(-v),
                     StackValue::Ref(_, _, _) => panic!(),
+                    _ => todo!(),
                 };
                 cur_frame.push(res);
             }
             Instruction::NoOp => {}
+            _ => todo!(),
         }
         cur_frame.increment_pc();
         state.frames.push(cur_frame);
