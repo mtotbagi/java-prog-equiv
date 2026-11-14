@@ -24,6 +24,7 @@ impl ToSexp for StackValue {
                 res += "ref ";
                 res += "null";
             }
+            _ => todo!(),
         }
         res += ")\n";
         res

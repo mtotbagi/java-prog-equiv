@@ -58,6 +58,8 @@ impl MethodId {
                     "[".to_string() + &MethodId::param_to_string(&ty.to_simple_type())
                 }
             },
+            SimpleType::Long => todo!(),
+            SimpleType::Double => todo!(),
         }
     }
 }

@@ -1,7 +1,7 @@
 use crate::{
-    ArrayType,
+    ArrayType, Constant, SimpleType,
     java_class::MethodId,
-    java_types::{SimpleRef, StackType, StackValue},
+    java_types::{SimpleRef, StackType},
 };
 
 #[derive(Clone, Debug)]
@@ -19,12 +19,17 @@ pub enum Instruction {
         index: u32,
     },
     Push {
-        value: StackValue,
+        value: Constant,
     },
     Return {
         ty: Option<StackType>,
     },
-    Get,
+    Get {
+        is_static: bool,
+        class_name: String,
+        field_name: String,
+        field_ty: SimpleType,
+    },
     New {
         class: String,
     },
@@ -68,6 +73,15 @@ pub enum Instruction {
         amount: i32,
     },
     NoOp,
+    // TODO's
+    Put,
+    CompareFloat {
+        on_nan: i32,
+        // If true, doubles are compared, else floats
+        double: bool,
+    },
+    CompareLong,
+    DupX2,
 }
 
 #[derive(Clone, Copy, Debug)]

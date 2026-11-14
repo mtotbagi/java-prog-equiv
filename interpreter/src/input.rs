@@ -108,6 +108,8 @@ fn parse_array_value(ty: &ArrayType, input: &str) -> ArrayValue {
                 .unwrap_or_else(|_| panic!("invalid bool literal `{input}`"));
             ArrayValue::Boolean(b, z3::ast::BV::fresh_const("bool", 1))
         }
+        ArrayType::Long => todo!(),
+        ArrayType::Double => todo!(),
     }
 }
 

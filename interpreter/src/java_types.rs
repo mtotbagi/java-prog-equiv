@@ -10,6 +10,8 @@ pub enum StackValue {
     Float(f32),
     // The symbolic bool true iff ref is Some
     Ref(Option<u32>, z3::ast::Bool, z3::ast::BV),
+    Long(i64, z3::ast::BV),
+    Double(f64),
 }
 
 impl StackValue {
@@ -18,6 +20,8 @@ impl StackValue {
             StackValue::Int(_, _) => StackType::Int,
             StackValue::Float(_) => StackType::Float,
             StackValue::Ref(_, _, _) => StackType::Ref,
+            StackValue::Long(_, _) => StackType::Long,
+            StackValue::Double(_) => StackType::Double,
         }
     }
 
@@ -52,6 +56,8 @@ impl StackValue {
                 res
             }
             StackValue::Float(_) => vec![],
+            StackValue::Long(_, _) => todo!(),
+            StackValue::Double(_) => todo!(),
         }
     }
 }
@@ -64,6 +70,8 @@ pub enum ArrayValue {
     Char(u16, z3::ast::BV),
     Short(i16, z3::ast::BV),
     Boolean(bool, z3::ast::BV),
+    Long(i64, z3::ast::BV),
+    Double(f64),
 }
 
 impl ArrayValue {
@@ -75,6 +83,8 @@ impl ArrayValue {
             ArrayValue::Char(i, bv) => StackValue::Int(*i as i32, bv.zero_ext(16)),
             ArrayValue::Short(i, bv) => StackValue::Int(*i as i32, bv.sign_ext(16)),
             ArrayValue::Boolean(i, bv) => StackValue::Int(*i as i32, bv.zero_ext(31)),
+            ArrayValue::Long(i, bv) => StackValue::Long(*i, bv.clone()),
+            ArrayValue::Double(f) => StackValue::Double(*f),
         }
     }
 
@@ -84,8 +94,9 @@ impl ArrayValue {
             | ArrayValue::Byte(_, bv)
             | ArrayValue::Char(_, bv)
             | ArrayValue::Short(_, bv)
-            | ArrayValue::Boolean(_, bv) => z3::ast::Dynamic::from_ast(bv),
-            ArrayValue::Float(_) => todo!(),
+            | ArrayValue::Boolean(_, bv)
+            | ArrayValue::Long(_, bv) => z3::ast::Dynamic::from_ast(bv),
+            ArrayValue::Float(_) | ArrayValue::Double(_) => todo!(),
         }
     }
 
@@ -97,6 +108,8 @@ impl ArrayValue {
             ArrayValue::Char(c, _) => ArrayValue::Char(*c, sym_val.as_bv().unwrap()),
             ArrayValue::Short(s, _) => ArrayValue::Short(*s, sym_val.as_bv().unwrap()),
             ArrayValue::Boolean(b, _) => ArrayValue::Boolean(*b, sym_val.as_bv().unwrap()),
+            ArrayValue::Long(_, _) => todo!(),
+            ArrayValue::Double(_) => todo!(),
         }
     }
 }
@@ -201,6 +214,8 @@ impl Array {
             ArrayType::Char => ArrayValue::Char(0, z3::ast::BV::from_i64(0, 16)),
             ArrayType::Short => ArrayValue::Short(0, z3::ast::BV::from_i64(0, 16)),
             ArrayType::Boolean => ArrayValue::Boolean(false, z3::ast::BV::from_i64(0, 1)),
+            ArrayType::Long => ArrayValue::Long(0, z3::ast::BV::from_i64(0, 64)),
+            ArrayType::Double => ArrayValue::Double(0.0),
         };
         // 0 as default
         let arr = vec![default_val.clone(); len];
@@ -212,6 +227,12 @@ impl Array {
             len: bv,
         }
     }
+}
+
+#[derive(Clone, Debug)]
+pub enum Constant {
+    Stack(StackValue),
+    Heap(HeapValue),
 }
 
 #[derive(Clone, Debug)]
@@ -228,6 +249,8 @@ pub enum ArrayType {
     Char,
     Short,
     Boolean,
+    Long,
+    Double,
 }
 
 impl ArrayType {
@@ -239,6 +262,8 @@ impl ArrayType {
             ArrayType::Char => SimpleType::Char,
             ArrayType::Short => SimpleType::Short,
             ArrayType::Boolean => SimpleType::Boolean,
+            ArrayType::Long => SimpleType::Long,
+            ArrayType::Double => SimpleType::Double,
         }
     }
 
@@ -250,6 +275,9 @@ impl ArrayType {
             ArrayType::Char => z3::Sort::bitvector(16),
             ArrayType::Short => z3::Sort::bitvector(16),
             ArrayType::Boolean => z3::Sort::bitvector(1),
+            ArrayType::Long => z3::Sort::bitvector(64),
+            // Check that this is correct?
+            ArrayType::Double => z3::Sort::float(11, 52),
         }
     }
 }
@@ -257,9 +285,9 @@ impl ArrayType {
 #[derive(Clone, Debug)]
 pub enum SimpleType {
     Int,
-    // Long,
+    Long,
     Float,
-    // Double,
+    Double,
     Byte,
     Char,
     Short,
@@ -277,6 +305,8 @@ impl SimpleType {
             SimpleType::Short => ArrayType::Short,
             SimpleType::Boolean => ArrayType::Boolean,
             SimpleType::SimpleRef(_) => panic!("Cannot convert simpleref to ArrayType"),
+            SimpleType::Long => ArrayType::Long,
+            SimpleType::Double => ArrayType::Double,
         }
     }
 }
@@ -286,4 +316,6 @@ pub enum StackType {
     Int,
     Float,
     Ref,
+    Long,
+    Double,
 }
