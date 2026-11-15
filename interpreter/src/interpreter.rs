@@ -168,7 +168,10 @@ impl Interpreter {
                 method_id,
                 simple_ref,
             } => {
-                assert!(matches!(access, Access::Static | Access::Special));
+                assert!(matches!(
+                    access,
+                    Access::Static | Access::Special | Access::Virtual
+                ));
                 eprintln!("{}", method_id.name);
                 // If this is not a method of the class, it's one of the special cases
                 // Or it's unhandled and we panic
@@ -191,11 +194,12 @@ impl Interpreter {
                         method: method_id.clone(),
                         idx: 0,
                     };
+                    // Non-static calls also pop the receiver, which becomes local 0
+                    let n_args =
+                        method_id.params.len() + usize::from(!matches!(access, Access::Static));
                     let new_locals = cur_frame
                         .stack
-                        .drain(
-                            cur_frame.stack.len() - method_id.params.len()..cur_frame.stack.len(),
-                        )
+                        .drain(cur_frame.stack.len() - n_args..)
                         .collect();
                     let new_frame = Frame::new(new_pc, new_locals);
                     cur_frame.increment_pc();

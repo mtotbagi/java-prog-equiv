@@ -476,9 +476,14 @@ impl FromJson for Method {
             .map(Instruction::from_json)
             .collect();
 
+        let is_static = json["access"]
+            .as_array()
+            .is_some_and(|access| access.iter().any(|a| a == "static"));
+
         Method {
             id: MethodId::from_json(json),
             instructions,
+            is_static,
         }
     }
 }
