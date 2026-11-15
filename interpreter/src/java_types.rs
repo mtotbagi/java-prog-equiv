@@ -25,6 +25,11 @@ impl StackValue {
         }
     }
 
+    /// Long and double take two local variable slots
+    pub fn is_wide(&self) -> bool {
+        matches!(self, StackValue::Long(..) | StackValue::Double(..))
+    }
+
     pub fn to_array_value(&self, ty: ArrayType) -> ArrayValue {
         match (self, ty) {
             (StackValue::Int(i, bv), ArrayType::Int) => ArrayValue::Int(*i, bv.clone()),
