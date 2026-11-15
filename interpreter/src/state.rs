@@ -10,7 +10,7 @@ pub enum Either {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExeResult {
-    Ok(Option<StackValue>),
+    Ok(Option<(StackValue, Heap)>),
     AssertErr,
     OutOfBounds,
     NullPointer,
@@ -41,7 +41,7 @@ impl State {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Heap {
     pub heap: Vec<HeapValue>,
 }

@@ -92,7 +92,7 @@ impl StackValue {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ArrayValue {
     Int(i32, z3::ast::BV),
     Float(f32, Float),
@@ -144,7 +144,7 @@ impl ArrayValue {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum HeapValue {
     Int(i32, z3::ast::BV),
     Long(i64, z3::ast::BV),
@@ -212,7 +212,7 @@ impl HeapValue {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Array {
     pub ty: ArrayType,
     pub values: Vec<ArrayValue>,
@@ -275,7 +275,7 @@ pub enum SimpleRef {
     Array { ty: ArrayType },
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ArrayType {
     Int,
     Float,

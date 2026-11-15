@@ -120,7 +120,7 @@ impl Interpreter {
                 } else {
                     if cur_frame.program_counter.method.ret_ty.is_some() {
                         let value = cur_frame.stack.pop().expect("Stack shouldn't be empty!");
-                        return (Either::Result(Ok(Some(value))), None);
+                        return (Either::Result(Ok(Some((value, state.heap)))), None);
                     } else {
                         return (Either::Result(Ok(None)), None);
                     }
@@ -572,10 +572,7 @@ impl Interpreter {
                 cur_frame.stack.push(StackValue::Int(res, sym_res));
             }
             Instruction::DupX2 => {
-                if matches!(
-                    cur_frame.stack[cur_frame.stack.len() - 2].get_type(),
-                    StackType::Double | StackType::Long
-                ) {
+                if cur_frame.stack[cur_frame.stack.len() - 2].is_wide() {
                     let to_dup = cur_frame.stack.pop().unwrap();
                     let middle = cur_frame.stack.pop().unwrap();
                     cur_frame.stack.push(to_dup.clone());
