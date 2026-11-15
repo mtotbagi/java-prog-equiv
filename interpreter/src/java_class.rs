@@ -19,6 +19,7 @@ impl Class {
 pub struct Method {
     pub id: MethodId,
     pub instructions: Box<[Instruction]>,
+    pub is_static: bool,
 }
 
 #[derive(Clone, Debug)]
