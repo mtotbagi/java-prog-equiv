@@ -1,7 +1,8 @@
 use serde_json::Value;
+use z3::ast::Float;
 
 use crate::{
-    Access, Cond, Constant, Instruction, Op, SimpleRef, StackType, StackValue,
+    Access, BitOp, Cond, Constant, Instruction, Op, SimpleRef, StackType, StackValue,
     java_class::{Class, Method, MethodId},
     java_types::SimpleType,
 };
@@ -94,12 +95,12 @@ impl FromJson for StackValue {
             }
             "float" => {
                 let val = f32::from_json(&json["value"]);
-                Self::Float(val)
+                Self::Float(val, Float::from_f32(0.0))
             }
             "ref" => todo!(),
             "double" => {
                 let val = f64::from_json(&json["value"]);
-                Self::Double(val)
+                Self::Double(val, Float::from_f64(0.0))
             }
             "long" => {
                 let val = i64::from_json(&json["value"]);
@@ -255,7 +256,6 @@ impl FromJson for Option<StackType> {
 
 impl FromJson for Instruction {
     fn from_json(json: &Value) -> Self {
-        eprintln!("parsin json: {json}");
         let Value::String(s) = &json["opr"] else {
             panic!("Invalid json")
         };
@@ -334,16 +334,42 @@ impl FromJson for Instruction {
             },
             // As best as I can determine, cast doesn't actually do anything
             "cast" => Self::NoOp,
-            "put" => Self::Put,
             "comparefloating" => Self::CompareFloat {
                 on_nan: i32::from_json(&json["onnan"]),
                 double: json["type"] == Value::String("double".to_string()),
             },
-            // TODO
-            "bitopr" => Self::NoOp,
+            "put" => {
+                let is_static = json["static"].as_bool().unwrap();
+                let field_name = json["field"]["name"].as_str().unwrap().to_string();
+                let class_name = json["field"]["class"].as_str().unwrap().to_string();
+                let field_ty = SimpleType::from_json(&json["field"]["type"]);
+                Self::Put {
+                    is_static,
+                    class_name,
+                    field_name,
+                    field_ty,
+                }
+            }
+            "bitopr" => Self::BitOpr {
+                op: BitOp::from_json(&json["operant"]),
+            },
             "comparelongs" => Self::CompareLong,
             "dup_x2" => Self::DupX2,
             _ => unimplemented!("{}", json),
+        }
+    }
+}
+
+impl FromJson for BitOp {
+    fn from_json(json: &Value) -> Self {
+        match json.as_str().unwrap() {
+            "shl" => BitOp::Shl,
+            "shr" => BitOp::Shr,
+            "ushr" => BitOp::Ushr,
+            "and" => BitOp::And,
+            "or" => BitOp::Or,
+            "xor" => BitOp::Xor,
+            _ => panic!("Invalid json {json}"),
         }
     }
 }

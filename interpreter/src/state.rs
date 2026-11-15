@@ -78,8 +78,16 @@ impl Frame {
         if words == 1 {
             self.stack.push(self.stack[self.stack.len() - 1].clone());
         } else if words == 2 {
-            self.stack.push(self.stack[self.stack.len() - 2].clone());
-            self.stack.push(self.stack[self.stack.len() - 2].clone());
+            let is_64bit_val = matches!(
+                self.stack[self.stack.len() - 1].get_type(),
+                StackType::Double | StackType::Long
+            );
+            if is_64bit_val {
+                self.stack.push(self.stack[self.stack.len() - 1].clone());
+            } else {
+                self.stack.push(self.stack[self.stack.len() - 2].clone());
+                self.stack.push(self.stack[self.stack.len() - 2].clone());
+            }
         } else {
             panic!()
         }

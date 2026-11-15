@@ -12,7 +12,7 @@ impl ToSexp for StackValue {
                 res += "int ";
                 res += &i.to_string();
             }
-            StackValue::Float(f) => {
+            StackValue::Float(f, _) => {
                 res += "float ";
                 res += &f.to_string();
             }

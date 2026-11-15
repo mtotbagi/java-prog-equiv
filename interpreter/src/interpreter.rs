@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use z3::ast::BV;
+use z3::ast::{BV, Bool};
 
 use crate::{
     state::ExeResult::{AssertErr, DidNotFinish, Div0, NullPointer, Ok, OutOfBounds},
@@ -127,17 +127,29 @@ impl Interpreter {
                 }
             }
             Instruction::Get {
-                is_static: _,
-                class_name: _,
+                is_static,
+                class_name,
                 field_name,
                 field_ty: _,
             } => {
-                assert!(field_name == "$assertionsDisabled");
-                // TODO handle other cases than assertionsDisabled = false
-                cur_frame
-                    .stack
-                    .push(StackValue::Int(0, z3::ast::BV::from_i64(0, 32)));
-                dbg!(&cur_frame.stack);
+                if field_name == "$assertionsDisabled" {
+                    cur_frame
+                        .stack
+                        .push(StackValue::Int(0, z3::ast::BV::from_i64(0, 32)));
+                } else if *is_static {
+                    todo!()
+                } else if *class_name != self.class.name {
+                    todo!()
+                } else {
+                    let StackValue::Ref(Some(r), _, _) = cur_frame.stack.pop().unwrap() else {
+                        panic!()
+                    };
+                    let HeapValue::Object { name: _, fields } = &state.heap.heap[r as usize] else {
+                        panic!()
+                    };
+                    let field = fields[field_name].to_stack_value();
+                    cur_frame.stack.push(field);
+                }
             }
             Instruction::New { class } => {
                 let idx = state.heap.heap.len();
@@ -152,10 +164,11 @@ impl Interpreter {
                 });
             }
             Instruction::Invoke {
-                access: _,
+                access,
                 method_id,
                 simple_ref,
             } => {
+                assert!(matches!(access, Access::Static | Access::Special));
                 eprintln!("{}", method_id.name);
                 // If this is not a method of the class, it's one of the special cases
                 // Or it's unhandled and we panic
@@ -191,33 +204,48 @@ impl Interpreter {
                     return (Either::State(state), None);
                 }
             }
-            Instruction::Binary { op, ty } => match ty {
-                StackType::Int => {
-                    let Some(StackValue::Int(rhs, rhs_bv)) = cur_frame.stack.pop() else {
-                        panic!()
-                    };
-                    let Some(StackValue::Int(lhs, lhs_bv)) = cur_frame.stack.pop() else {
-                        panic!()
-                    };
-                    dbg!(lhs, rhs);
-                    // Only add contraint if division can fail
-                    let can_div0 = matches!(op, Op::Div | Op::Rem);
-                    match op.op_int(lhs, rhs) {
-                        Some(result) => {
-                            cur_frame
-                                .stack
-                                .push(StackValue::Int(result, op.op_z3(&lhs_bv, &rhs_bv)));
-                            cur_frame.increment_pc();
-                            state.frames.push(cur_frame);
-                            return (Either::State(state), can_div0.then(|| rhs_bv.ne(0)));
-                        }
-                        None => return (Either::Result(Div0), Some(rhs_bv.eq(0))),
+            Instruction::Binary { op, ty: _ } => {
+                let rhs = cur_frame.stack.pop().unwrap();
+                let lhs = cur_frame.stack.pop().unwrap();
+                let (op_res, is_rhs_zero) = match (lhs, rhs) {
+                    (StackValue::Int(lhs, lhs_sym), StackValue::Int(rhs, rhs_sym)) => (
+                        op.op_int(lhs, rhs)
+                            .map(|i| StackValue::Int(i, op.op_z3_bv(&lhs_sym, &rhs_sym))),
+                        rhs_sym.eq(0),
+                    ),
+                    (StackValue::Float(lhs, lhs_sym), StackValue::Float(rhs, rhs_sym)) => (
+                        Some(StackValue::Float(
+                            op.op_f32(lhs, rhs),
+                            op.op_z3_float(&lhs_sym, &rhs_sym),
+                        )),
+                        z3_false(),
+                    ),
+                    (StackValue::Long(lhs, lhs_sym), StackValue::Long(rhs, rhs_sym)) => (
+                        op.op_long(lhs, rhs)
+                            .map(|i| StackValue::Long(i, op.op_z3_bv(&lhs_sym, &rhs_sym))),
+                        rhs_sym.eq(0),
+                    ),
+                    (StackValue::Double(lhs, lhs_sym), StackValue::Double(rhs, rhs_sym)) => (
+                        Some(StackValue::Double(
+                            op.op_f64(lhs, rhs),
+                            op.op_z3_float(&lhs_sym, &rhs_sym),
+                        )),
+                        z3_false(),
+                    ),
+                    _ => panic!("Invalid types"),
+                };
+                // Only add contraint if division can fail
+                let can_div0 = matches!(op, Op::Div | Op::Rem);
+                match op_res {
+                    Some(result) => {
+                        cur_frame.stack.push(result);
+                        cur_frame.increment_pc();
+                        state.frames.push(cur_frame);
+                        return (Either::State(state), can_div0.then(|| is_rhs_zero.not()));
                     }
+                    None => return (Either::Result(Div0), Some(is_rhs_zero)),
                 }
-                StackType::Float => todo!(),
-                StackType::Ref => panic!("Cannot use ref for arithmetic operations!"),
-                _ => todo!(),
-            },
+            }
             Instruction::If { cond, target } => {
                 let rhs = cur_frame.stack.pop().unwrap();
                 let lhs = cur_frame.stack.pop().unwrap();
@@ -233,8 +261,7 @@ impl Interpreter {
                         cond.cmp_ref(lhs, rhs),
                         Some(cond.cmp_z3_ref((&lhs_is_null, &lhs_bv), (&rhs_is_null, &rhs_bv))),
                     ),
-                    (StackValue::Float(_), StackValue::Float(_)) => todo!(),
-                    _ => panic!("Cannot compare different types"),
+                    _ => panic!("Cannot compare these types"),
                 };
 
                 if real_bool {
@@ -439,20 +466,142 @@ impl Interpreter {
                 ));
             }
             Instruction::Neg { ty } => {
-                let Some(value) = cur_frame.stack.pop() else {
-                    panic!()
-                };
+                let value = cur_frame.stack.pop().unwrap();
                 assert!(*ty == value.get_type());
                 let res = match value {
                     StackValue::Int(v, bv) => StackValue::Int(v.wrapping_neg(), bv.bvneg()),
-                    StackValue::Float(v) => StackValue::Float(-v),
+                    StackValue::Float(v, sym) => StackValue::Float(-v, sym.unary_neg()),
+                    StackValue::Long(l, bv) => StackValue::Long(l.wrapping_neg(), bv.bvneg()),
+                    StackValue::Double(d, sym) => StackValue::Double(-d, sym.unary_neg()),
                     StackValue::Ref(_, _, _) => panic!(),
-                    _ => todo!(),
                 };
                 cur_frame.push(res);
             }
             Instruction::NoOp => {}
-            _ => todo!(),
+            Instruction::Put {
+                is_static,
+                class_name,
+                field_name,
+                field_ty,
+            } => {
+                if *is_static {
+                    todo!()
+                } else if *class_name != self.class.name {
+                    todo!()
+                } else {
+                    let value = cur_frame.stack.pop().unwrap();
+                    let StackValue::Ref(Some(r), _, _) = cur_frame.stack.pop().unwrap() else {
+                        panic!()
+                    };
+                    let HeapValue::Object { name: _, fields } = &mut state.heap.heap[r as usize]
+                    else {
+                        panic!()
+                    };
+                    fields.insert(field_name.clone(), value.to_heap_value(field_ty));
+                }
+            }
+            Instruction::CompareFloat { on_nan, double } => {
+                let (res, sym_val1, sym_val2) = if *double {
+                    let StackValue::Double(val2, sym_val2) = cur_frame.stack.pop().unwrap() else {
+                        panic!()
+                    };
+                    let StackValue::Double(val1, sym_val1) = cur_frame.stack.pop().unwrap() else {
+                        panic!()
+                    };
+                    let res = if val1.is_nan() || val2.is_nan() {
+                        *on_nan
+                    } else if val1 == val2 {
+                        0
+                    } else if val1 > val2 {
+                        1
+                    } else {
+                        -1
+                    };
+                    (res, sym_val1, sym_val2)
+                } else {
+                    let StackValue::Float(val2, sym_val2) = cur_frame.stack.pop().unwrap() else {
+                        panic!()
+                    };
+                    let StackValue::Float(val1, sym_val1) = cur_frame.stack.pop().unwrap() else {
+                        panic!()
+                    };
+
+                    let res = if val1.is_nan() || val2.is_nan() {
+                        *on_nan
+                    } else if val1 == val2 {
+                        0
+                    } else if val1 > val2 {
+                        1
+                    } else {
+                        -1
+                    };
+                    (res, sym_val1, sym_val2)
+                };
+                let zero = BV::from_i64(0, 32);
+                let one = BV::from_i64(1, 32);
+                let m_one = BV::from_i64(-1, 32);
+                let sym_onnan = BV::from_i64(*on_nan as i64, 32);
+                let a = sym_val1.gt(&sym_val2).ite(&one, &zero);
+                let b = sym_val1.lt(&sym_val2).ite(&m_one, &a);
+                let c = Bool::or(&[sym_val1.is_nan(), sym_val2.is_nan()]).ite(&sym_onnan, &b);
+                cur_frame.stack.push(StackValue::Int(res, c));
+            }
+            Instruction::CompareLong => {
+                let StackValue::Long(val2, sym_val2) = cur_frame.stack.pop().unwrap() else {
+                    panic!()
+                };
+                let StackValue::Long(val1, sym_val1) = cur_frame.stack.pop().unwrap() else {
+                    panic!()
+                };
+                let zero = BV::from_i64(0, 32);
+                let one = BV::from_i64(1, 32);
+                let m_one = BV::from_i64(-1, 32);
+                let zero_or_one = sym_val1.bvsgt(&sym_val2).ite(&one, &zero);
+                let sym_res = sym_val1.bvslt(sym_val2).ite(&m_one, &zero_or_one);
+                let res = if val1 == val2 {
+                    0
+                } else if val1 > val2 {
+                    1
+                } else {
+                    -1
+                };
+                cur_frame.stack.push(StackValue::Int(res, sym_res));
+            }
+            Instruction::DupX2 => {
+                if matches!(
+                    cur_frame.stack[cur_frame.stack.len() - 2].get_type(),
+                    StackType::Double | StackType::Long
+                ) {
+                    let to_dup = cur_frame.stack.pop().unwrap();
+                    let middle = cur_frame.stack.pop().unwrap();
+                    cur_frame.stack.push(to_dup.clone());
+                    cur_frame.stack.push(middle);
+                    cur_frame.stack.push(to_dup);
+                } else {
+                    let to_dup = cur_frame.stack.pop().unwrap();
+                    let middle1 = cur_frame.stack.pop().unwrap();
+                    let middle2 = cur_frame.stack.pop().unwrap();
+                    cur_frame.stack.push(to_dup.clone());
+                    cur_frame.stack.push(middle2);
+                    cur_frame.stack.push(middle1);
+                    cur_frame.stack.push(to_dup);
+                }
+            }
+            Instruction::BitOpr { op } => {
+                let rhs = cur_frame.stack.pop().unwrap();
+                let lhs = cur_frame.stack.pop().unwrap();
+                let res = match (lhs, rhs) {
+                    (StackValue::Int(lhs, lhs_sym), StackValue::Int(rhs, rhs_sym)) => {
+                        StackValue::Int(op.op_int(lhs, rhs), op.op_z3_bv(&lhs_sym, &rhs_sym))
+                    }
+
+                    (StackValue::Long(lhs, lhs_sym), StackValue::Long(rhs, rhs_sym)) => {
+                        StackValue::Long(op.op_long(lhs, rhs), op.op_z3_bv(&lhs_sym, &rhs_sym))
+                    }
+                    _ => panic!("Invalid types"),
+                };
+                cur_frame.stack.push(res);
+            }
         }
         cur_frame.increment_pc();
         state.frames.push(cur_frame);
