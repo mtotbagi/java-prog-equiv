@@ -85,6 +85,7 @@ fn parse_array_value(ty: &ArrayType, input: &str) -> ArrayValue {
             input
                 .parse()
                 .unwrap_or_else(|_| panic!("invalid float literal `{input}`")),
+            z3::ast::Float::fresh_const_float32("float")
         ),
         ArrayType::Byte => ArrayValue::Byte(
             input

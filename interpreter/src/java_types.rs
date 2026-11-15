@@ -1,27 +1,27 @@
 use std::collections::HashMap;
 
-use z3::ast::Dynamic;
+use z3::ast::{Dynamic, Float};
 
 use crate::Heap;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum StackValue {
     Int(i32, z3::ast::BV),
-    Float(f32),
+    Float(f32, Float),
     // The symbolic bool true iff ref is Some
     Ref(Option<u32>, z3::ast::Bool, z3::ast::BV),
     Long(i64, z3::ast::BV),
-    Double(f64),
+    Double(f64, Float),
 }
 
 impl StackValue {
     pub fn get_type(&self) -> StackType {
         match self {
             StackValue::Int(_, _) => StackType::Int,
-            StackValue::Float(_) => StackType::Float,
+            StackValue::Float(_, _) => StackType::Float,
             StackValue::Ref(_, _, _) => StackType::Ref,
             StackValue::Long(_, _) => StackType::Long,
-            StackValue::Double(_) => StackType::Double,
+            StackValue::Double(_, _) => StackType::Double,
         }
     }
 
@@ -40,7 +40,7 @@ impl StackValue {
             (StackValue::Int(i, bv), ArrayType::Boolean) => {
                 ArrayValue::Boolean(*i != 0, bv.extract(1, 0))
             }
-            (StackValue::Float(f), ArrayType::Float) => ArrayValue::Float(*f),
+            (StackValue::Float(f, ast), ArrayType::Float) => ArrayValue::Float(*f, ast.clone()),
             _ => panic!("Cannot convert {:?} to {:?}", self, ty),
         }
     }
@@ -55,9 +55,34 @@ impl StackValue {
                 }
                 res
             }
-            StackValue::Float(_) => vec![],
-            StackValue::Long(_, _) => todo!(),
-            StackValue::Double(_) => todo!(),
+            StackValue::Float(_, ast) => vec![Dynamic::from_ast(ast)],
+            StackValue::Long(_, bv) => vec![Dynamic::from_ast(bv)],
+            StackValue::Double(_, ast) => vec![Dynamic::from_ast(ast)],
+        }
+    }
+
+    pub(crate) fn to_heap_value(&self, ty: &SimpleType) -> HeapValue {
+        match (self, ty) {
+            (StackValue::Int(i, bv), SimpleType::Int) => HeapValue::Int(*i, bv.clone()),
+            (StackValue::Int(i, bv), SimpleType::Byte) => {
+                HeapValue::Byte(*i as u8, bv.extract(7, 0))
+            }
+            (StackValue::Int(i, bv), SimpleType::Char) => {
+                HeapValue::Char(*i as u16, bv.extract(15, 0))
+            }
+            (StackValue::Int(i, bv), SimpleType::Short) => {
+                HeapValue::Short(*i as i16, bv.extract(15, 0))
+            }
+            (StackValue::Int(i, bv), SimpleType::Boolean) => {
+                HeapValue::Boolean(*i != 0, bv.extract(1, 0))
+            }
+            (StackValue::Float(f, ast), SimpleType::Float) => HeapValue::Float(*f, ast.clone()),
+            (StackValue::Double(f, ast), SimpleType::Double) => HeapValue::Double(*f, ast.clone()),
+            (StackValue::Long(f, ast), SimpleType::Long) => HeapValue::Long(*f, ast.clone()),
+            (StackValue::Ref(a, b, c), SimpleType::SimpleRef(_)) => {
+                HeapValue::Ref(*a, b.clone(), c.clone())
+            }
+            _ => panic!("Cannot convert {:?} to {:?}", self, ty),
         }
     }
 }
@@ -65,51 +90,51 @@ impl StackValue {
 #[derive(Clone, Debug)]
 pub enum ArrayValue {
     Int(i32, z3::ast::BV),
-    Float(f32),
+    Float(f32, Float),
     Byte(u8, z3::ast::BV),
     Char(u16, z3::ast::BV),
     Short(i16, z3::ast::BV),
     Boolean(bool, z3::ast::BV),
     Long(i64, z3::ast::BV),
-    Double(f64),
+    Double(f64, Float),
 }
 
 impl ArrayValue {
     pub fn to_stack_value(&self) -> StackValue {
         match self {
             ArrayValue::Int(i, bv) => StackValue::Int(*i, bv.clone()),
-            ArrayValue::Float(f) => StackValue::Float(*f),
+            ArrayValue::Float(f, ast) => StackValue::Float(*f, ast.clone()),
             ArrayValue::Byte(i, bv) => StackValue::Int(*i as i32, bv.zero_ext(24)),
             ArrayValue::Char(i, bv) => StackValue::Int(*i as i32, bv.zero_ext(16)),
             ArrayValue::Short(i, bv) => StackValue::Int(*i as i32, bv.sign_ext(16)),
             ArrayValue::Boolean(i, bv) => StackValue::Int(*i as i32, bv.zero_ext(31)),
             ArrayValue::Long(i, bv) => StackValue::Long(*i, bv.clone()),
-            ArrayValue::Double(f) => StackValue::Double(*f),
+            ArrayValue::Double(f, ast) => StackValue::Double(*f, ast.clone()),
         }
     }
 
-    pub fn z3(&self) -> z3::ast::Dynamic {
+    pub fn z3(&self) -> Dynamic {
         match self {
             ArrayValue::Int(_, bv)
             | ArrayValue::Byte(_, bv)
             | ArrayValue::Char(_, bv)
             | ArrayValue::Short(_, bv)
             | ArrayValue::Boolean(_, bv)
-            | ArrayValue::Long(_, bv) => z3::ast::Dynamic::from_ast(bv),
-            ArrayValue::Float(_) | ArrayValue::Double(_) => todo!(),
+            | ArrayValue::Long(_, bv) => Dynamic::from_ast(bv),
+            ArrayValue::Float(_, ast) | ArrayValue::Double(_, ast) => Dynamic::from_ast(ast),
         }
     }
 
-    pub fn swap_sym_val(&self, sym_val: z3::ast::Dynamic) -> ArrayValue {
+    pub fn swap_sym_val(&self, sym_val: Dynamic) -> ArrayValue {
         match self {
             ArrayValue::Int(i, _) => ArrayValue::Int(*i, sym_val.as_bv().unwrap()),
-            ArrayValue::Float(f) => ArrayValue::Float(*f),
+            ArrayValue::Float(f, _) => ArrayValue::Float(*f, sym_val.as_float().unwrap()),
             ArrayValue::Byte(b, _) => ArrayValue::Byte(*b, sym_val.as_bv().unwrap()),
             ArrayValue::Char(c, _) => ArrayValue::Char(*c, sym_val.as_bv().unwrap()),
             ArrayValue::Short(s, _) => ArrayValue::Short(*s, sym_val.as_bv().unwrap()),
             ArrayValue::Boolean(b, _) => ArrayValue::Boolean(*b, sym_val.as_bv().unwrap()),
-            ArrayValue::Long(_, _) => todo!(),
-            ArrayValue::Double(_) => todo!(),
+            ArrayValue::Long(d, _) => ArrayValue::Long(*d, sym_val.as_bv().unwrap()),
+            ArrayValue::Double(d, _) => ArrayValue::Double(*d, sym_val.as_float().unwrap()),
         }
     }
 }
@@ -117,8 +142,10 @@ impl ArrayValue {
 #[derive(Clone, Debug)]
 pub enum HeapValue {
     Int(i32, z3::ast::BV),
+    Long(i64, z3::ast::BV),
     Ref(Option<u32>, z3::ast::Bool, z3::ast::BV),
-    Float(f32),
+    Float(f32, Float),
+    Double(f64, Float),
     Byte(u8, z3::ast::BV),
     Char(u16, z3::ast::BV),
     Short(i16, z3::ast::BV),
@@ -134,7 +161,7 @@ impl HeapValue {
     pub fn to_stack_value(&self) -> StackValue {
         match self {
             HeapValue::Int(i, bv) => StackValue::Int(*i, bv.clone()),
-            HeapValue::Float(f) => StackValue::Float(*f),
+            HeapValue::Float(f, ast) => StackValue::Float(*f, ast.clone()),
             HeapValue::Byte(b, bv) => StackValue::Int(*b as i32, bv.zero_ext(24)),
             HeapValue::Short(s, bv) => StackValue::Int(*s as i32, bv.sign_ext(16)),
             HeapValue::Char(c, bv) => StackValue::Int(*c as i32, bv.zero_ext(16)),
@@ -156,7 +183,7 @@ impl HeapValue {
                 }
                 res
             }
-            HeapValue::Float(_) => vec![],
+            HeapValue::Float(_, ast) => vec![Dynamic::from_ast(ast)],
             HeapValue::Byte(_, bv) => vec![Dynamic::from_ast(bv)],
             HeapValue::Char(_, bv) => vec![Dynamic::from_ast(bv)],
             HeapValue::Short(_, bv) => vec![Dynamic::from_ast(bv)],
@@ -174,6 +201,8 @@ impl HeapValue {
                 }
                 res
             }
+            HeapValue::Long(_, bv) => vec![Dynamic::from_ast(bv)],
+            HeapValue::Double(_, ast) => vec![Dynamic::from_ast(ast)],
         }
     }
 }
@@ -209,13 +238,13 @@ impl Array {
         let len = x as usize;
         let default_val = match ty {
             ArrayType::Int => ArrayValue::Int(0, z3::ast::BV::from_i64(0, 32)),
-            ArrayType::Float => ArrayValue::Float(0.0),
+            ArrayType::Float => ArrayValue::Float(0.0, Float::from_f32(0.0)),
             ArrayType::Byte => ArrayValue::Byte(0, z3::ast::BV::from_i64(0, 8)),
             ArrayType::Char => ArrayValue::Char(0, z3::ast::BV::from_i64(0, 16)),
             ArrayType::Short => ArrayValue::Short(0, z3::ast::BV::from_i64(0, 16)),
             ArrayType::Boolean => ArrayValue::Boolean(false, z3::ast::BV::from_i64(0, 1)),
             ArrayType::Long => ArrayValue::Long(0, z3::ast::BV::from_i64(0, 64)),
-            ArrayType::Double => ArrayValue::Double(0.0),
+            ArrayType::Double => ArrayValue::Double(0.0, Float::from_f64(0.0)),
         };
         // 0 as default
         let arr = vec![default_val.clone(); len];
