@@ -54,10 +54,19 @@ pub struct Frame {
 }
 
 impl Frame {
-    pub fn new(program_counter: ProgramCounter, locals: Vec<StackValue>) -> Self {
+    pub fn new(program_counter: ProgramCounter, args: Vec<StackValue>) -> Self {
+        // Long and double take two local slots, the second one is unusable
+        let mut locals = Vec::with_capacity(args.len());
+        for value in args {
+            let is_wide = value.is_wide();
+            locals.push(Some(value));
+            if is_wide {
+                locals.push(None);
+            }
+        }
         Self {
             stack: vec![],
-            locals: locals.into_iter().map(Some).collect(),
+            locals,
             program_counter,
         }
     }
@@ -78,11 +87,7 @@ impl Frame {
         if words == 1 {
             self.stack.push(self.stack[self.stack.len() - 1].clone());
         } else if words == 2 {
-            let is_64bit_val = matches!(
-                self.stack[self.stack.len() - 1].get_type(),
-                StackType::Double | StackType::Long
-            );
-            if is_64bit_val {
+            if self.stack[self.stack.len() - 1].is_wide() {
                 self.stack.push(self.stack[self.stack.len() - 1].clone());
             } else {
                 self.stack.push(self.stack[self.stack.len() - 2].clone());
@@ -108,9 +113,14 @@ impl Frame {
         let value = self.stack.pop().unwrap();
         assert!(value.get_type() == ty);
 
+        let index = index as usize;
+        let slots = if value.is_wide() { 2 } else { 1 };
         self.locals
-            .resize((index as usize + 1).max(self.locals.len()), None);
-        self.locals[index as usize] = Some(value);
+            .resize((index + slots).max(self.locals.len()), None);
+        if slots == 2 {
+            self.locals[index + 1] = None;
+        }
+        self.locals[index] = Some(value);
     }
 }
 
