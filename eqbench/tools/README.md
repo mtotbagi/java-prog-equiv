@@ -15,7 +15,7 @@ then runs the only program of its default package with the given arguments.
 
 | Tool | Status |
 |---|---|
-| [PASDA, ARDiff, DSE](pasda) | Done, tested on macOS (aarch64), not on Linux yet. ARDiff and DSE are the versions fixed by the authors of PASDA, run from the same build with `--tool`. They answer `unknown` for `void` methods, non-primitive parameters, methods outside `oldV` / `newV`, methods using instance members and pairs PASDA's instrumentation cannot align. `--budget` (default: one second below the timeout of `analyse`) and `--depth` (default 10) can be passed too. |
+| [PASDA, ARDiff, DSE](pasda) | Done, tested on macOS (aarch64), not on Linux yet. ARDiff and DSE are the versions fixed by the authors of PASDA, run from the same build with `--tool`. The adapter makes the compared method the first, static `snippet` method of its class and the other members static, as PASDA requires. They answer `unknown` for `void` methods, non-primitive parameters, methods outside `oldV` / `newV` and pairs PASDA's instrumentation cannot handle (e.g. a callee whose signature changes). `--budget` (default: one second below the timeout of `analyse`) and `--depth` (default 10) can be passed too. |
 
 ## Results
 

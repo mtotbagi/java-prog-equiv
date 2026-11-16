@@ -67,21 +67,21 @@ def main() -> None:
 
 
 def prepare(source: str, cls: str, method: str) -> str:
-    """Makes `method` the `public static snippet` method of class `cls`.
-
-    Nothing else changes: as in PASDA's own benchmark, the method must not
-    use the instance members of its class, otherwise PASDA fails on the pair.
-    """
-    if not re.search(rf"\bclass\s+{cls}\b", source):
-        raise Unknown(f"no class {cls}")
+    """Makes `method` the `public static snippet` method of class `cls`, and
+    the other members of `cls` static so that `snippet` can still use them
+    (the client entry points of CLEVER call an instance method)."""
+    opening, closing = class_body(source, cls)
     declaration = re.compile(
         rf"^([ \t]*)(?:(?:public|private|protected|static|final|synchronized)\s+)*"
         rf"([\w\[\]<>.]+)\s+{re.escape(method)}\s*\(([^)]*)\)",
         re.M,
     )
-    found = next((m for m in declaration.finditer(source) if m.group(2) not in {"return", "new", "else"}), None)
+    found = next(
+        (m for m in declaration.finditer(source, opening, closing) if m.group(2) not in {"return", "new", "else"}),
+        None,
+    )
     if found is None:
-        raise Unknown(f"no method `{method}` with a return type")
+        raise Unknown(f"no method `{method}` with a return type in class {cls}")
     indent, ty, params = found.groups()
     if ty not in PRIMITIVES:
         raise Unknown(f"`{method}` returns {ty}, PASDA compares primitive results only")
@@ -90,10 +90,59 @@ def prepare(source: str, cls: str, method: str) -> str:
         if param_ty not in PRIMITIVES:
             raise Unknown(f"`{method}` takes a {param_ty}, PASDA supports primitive inputs only")
 
-    source = f"{source[: found.start()]}{indent}public static {ty} snippet({params}){source[found.end() :]}"
+    # PASDA fails on a method without parameters that calls other methods
+    # (CLEVER's `main()`), an unused one keeps the semantics.
+    if not params.strip():
+        params = "int unused"
+    # PASDA analyses the first method of the class, so `snippet` goes first.
+    end = matching_brace(source, source.index("{", found.end())) + 1
+    snippet = f"{indent}public static {ty} snippet({params}){source[found.end() : end]}\n"
+    source = source[: found.start()] + source[end:]
+    source = source[:opening] + "\n" + snippet + source[opening:]
     if method != "snippet":
         source = re.sub(rf"(?<![\w.]){re.escape(method)}\s*\(", "snippet(", source)
+    source = make_static(source, cls)
     return re.sub(r"^\s*package\s+[\w.]+\s*;", f"package {PACKAGE};", source, count=1, flags=re.M)
+
+
+def class_body(source: str, cls: str) -> tuple[int, int]:
+    """Positions after the opening brace of class `cls` and of its closing brace."""
+    m = re.search(rf"\bclass\s+{cls}\b[^{{]*\{{", source)
+    if m is None:
+        raise Unknown(f"no class {cls}")
+    return m.end(), matching_brace(source, m.end() - 1)
+
+
+def matching_brace(source: str, opening: int) -> int:
+    """Position of the brace closing the one at `opening`. Braces in strings
+    and comments are counted too, none of the supported pairs has any."""
+    depth = 0
+    for i in range(opening, len(source)):
+        depth += {"{": 1, "}": -1}.get(source[i], 0)
+        if depth == 0:
+            return i
+    raise Unknown("unbalanced braces")
+
+
+# A method or field declaration: modifiers, type, name, then `(`, `=`, `;` or `,`.
+MEMBER = re.compile(r"^([ \t]*)((?:(?:public|private|protected|final)\s+)*)([\w\[\]<>.]+\s+\w+\s*[(=;,])", re.M)
+
+
+def make_static(source: str, cls: str) -> str:
+    """Makes every method and field of class `cls` static."""
+    opening, end = class_body(source, cls)
+    body = source[opening:end]
+
+    def add_static(m: re.Match) -> str:
+        # Declarations inside a method body are local variables.
+        if body.count("{", 0, m.start()) != body.count("}", 0, m.start()):
+            return m.group(0)
+        return f"{m.group(1)}{m.group(2)}static {m.group(3)}"
+
+    body = MEMBER.sub(add_static, body)
+    body = re.sub(r"^[ \t]*@Override[ \t]*\n", "", body, flags=re.M)  # not allowed on static methods
+    body = re.sub(r"(?<![\w.])this\.", f"{cls}.", body)
+    return source[:opening] + body + source[end:]
 
 
 def run(pasda: Path, tool: str, old: str, new: str, depth: int, deadline: float) -> str:
