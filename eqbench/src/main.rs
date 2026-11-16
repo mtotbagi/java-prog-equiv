@@ -147,8 +147,9 @@ fn analyse(dataset: &Dataset, cmd: &[String], timeout: Duration, jobs: usize) ->
     let tool = resolve_tool(cmd)?;
     let style = Style::stdout();
     let width = id_width(dataset);
+    let jobs_label = format!("{jobs} job{}", if jobs == 1 { "" } else { "s" });
     eprintln!(
-        "analysing {} cases with `{}` (timeout {}s, {jobs} jobs)",
+        "analysing {} cases with `{}` (timeout {}s, {jobs_label})",
         dataset.cases.len(),
         cmd.join(" "),
         timeout.as_secs()
@@ -213,7 +214,7 @@ fn analyse(dataset: &Dataset, cmd: &[String], timeout: Duration, jobs: usize) ->
         .map(|(id, t)| format!(", max {} ({id})", format_duration(*t)))
         .unwrap_or_default();
     outln!(
-        "time      total {}, mean {}{slowest}, wall {} with {jobs} jobs",
+        "time      total {}, mean {}{slowest}, wall {} with {jobs_label}",
         format_duration(summary.total_time),
         format_duration(summary.mean_time()),
         format_duration(wall),

@@ -15,7 +15,31 @@ then runs the only program of its default package with the given arguments.
 
 | Tool | Status |
 |---|---|
-| [PASDA, ARDiff, DSE](pasda) | Done, tested on macOS (aarch64), not on Linux yet. ARDiff and DSE are the versions fixed by the authors of PASDA, run from the same build with `--tool`. They answer `unknown` for `void` methods, non-primitive parameters, methods outside `oldV` / `newV`, methods using instance members and pairs PASDA's instrumentation cannot align. `--budget` (default 9 s, below the 10 s of `analyse`) and `--depth` (default 10) can be passed too. |
+| [PASDA, ARDiff, DSE](pasda) | Done, tested on macOS (aarch64), not on Linux yet. ARDiff and DSE are the versions fixed by the authors of PASDA, run from the same build with `--tool`. They answer `unknown` for `void` methods, non-primitive parameters, methods outside `oldV` / `newV`, methods using instance members and pairs PASDA's instrumentation cannot align. `--budget` (default: one second below the timeout of `analyse`) and `--depth` (default 10) can be passed too. |
+
+## Results
+
+First runs on the 248 pairs, 10 s per pair, on an Apple M1 Pro (8 cores, 16 GB).
+
+| Tool | Jobs | Accuracy | F1 | eq precision / recall | neq precision / recall | unknown | Mean time | Wall time |
+|---|---|---|---|---|---|---|---|---|
+| PASDA | 1 | 58/248 (23.4%) | 0.361 | 0.957 / 0.163 | 0.735 / 0.319 | 176 | 5.1 s | 21 min |
+| ARDiff | 6 | 47/248 (19.0%) | 0.303 | 1.000 / 0.148 | 0.643 / 0.239 | 186 | 5.1 s | 3.6 min |
+| DSE | 6 | 44/248 (17.7%) | 0.296 | 1.000 / 0.141 | 0.781 / 0.221 | 197 | 4.6 s | 3.2 min |
+
+- Most answers are `unknown`: out of time on the numerical benchmarks (ell,
+  bess, gam, ran) and the loops of CLEVER, pairs outside the input format of the
+  tools (26 `void` methods, 10 raytrace methods on objects, methods using
+  instance members) and pairs PASDA's instrumentation cannot align (REVE).
+- Every wrong `neq` (13 for PASDA, 15 for ARDiff, 7 for DSE) is on a CLEVER `Eq`
+  pair. For CLEVER, `method name` is the library method that changed (`foo`,
+  `lib`) while the pair is equivalent for its client only (`main`, `client`):
+  in `CLEVER-Sub-Eq`, `foo(a, b)` returns `a - b` against `b - a`, called as
+  `foo(5, 900)` against `foo(900, 5)`. These answers are right for the method;
+  `analyse` must pass the client instead.
+- The only wrong `eq` is PASDA on `ran-ranzero-Neq`.
+- ARDiff and DSE ran 6 pairs at a time: their times, and so their timeouts, are
+  inflated compared to PASDA.
 
 ## Shortlist
 
