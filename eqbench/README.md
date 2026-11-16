@@ -12,7 +12,7 @@ The 24 whole-program pairs (no `J-Desc.json`) are left out.
 | `details <id>` | Show the metadata of a case and the diff between `oldV.java` and `newV.java` |
 | `build` | Compile every case to bytecode (`javac`), then to JSON (`jvm2json`) in `target/eqbench` |
 | `clean` | Remove `target/eqbench` |
-| `analyse <cmd…>` | Run `<cmd…> <old-dir> <new-dir>` on every case, the tool must print `eq` or `neq` |
+| `analyse <cmd…>` | Run `<cmd…> <old-dir> <new-dir>` on every case, the tool must print `eq` or `neq`; report accuracy, F1 (mean of `eq` and `neq`) and timings |
 
 ## Example
 
@@ -20,7 +20,10 @@ The 24 whole-program pairs (no `J-Desc.json`) are left out.
 $ just eqbench build
 $ just eqbench analyse ./my-tool
 ...
-correct predictions: 135/248 (54.4%)
-time: total 11.49 s, mean 46.3 ms, max 56.3 ms (ran-poidev-Eq)
-errors: 0 timeouts, 0 crashes, 0 invalid outputs, 0 not built
+accuracy  135/248 (54.4%)
+f1        0.352 (mean of eq and neq)
+          eq   precision 0.544  recall 1.000  f1 0.705
+          neq  precision -      recall 0.000  f1 0.000
+time      total 11.98 s, mean 48.3 ms, max 83.8 ms (ej_hash-testCollision3-Eq)
+errors    0 timeouts, 0 crashes, 0 invalid outputs, 0 not built
 ```
