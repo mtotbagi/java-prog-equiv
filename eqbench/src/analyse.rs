@@ -3,7 +3,8 @@
 //!
 //! The tool is called as `<cmd…> <old-dir> <new-dir>`, the two directories
 //! holding the JSON (jvm2json) of every class of the two versions of a case.
-//! It must print `eq` or `neq` on the first line of its standard output.
+//! It must print `eq`, `neq` or `unknown` on the first line of its standard
+//! output.
 
 use std::io::Read;
 use std::path::Path;
@@ -22,7 +23,9 @@ pub const TIMEOUT: Duration = Duration::from_secs(10);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
     Predicted(Kind),
-    /// The first line of the output was neither `eq` nor `neq`.
+    /// The tool could not decide.
+    Unknown,
+    /// The first line of the output was neither `eq`, `neq` nor `unknown`.
     Invalid(String),
     /// The tool exited with a failure status (`None` when killed by a signal).
     Crashed(Option<i32>),
@@ -36,6 +39,7 @@ impl Outcome {
         match self {
             Outcome::Predicted(Kind::Eq) => "eq".to_string(),
             Outcome::Predicted(Kind::Neq) => "neq".to_string(),
+            Outcome::Unknown => "unknown".to_string(),
             Outcome::Invalid(_) => "invalid".to_string(),
             Outcome::Crashed(Some(code)) => format!("exit {code}"),
             Outcome::Crashed(None) => "killed".to_string(),
@@ -142,20 +146,22 @@ fn kill_group(pid: u32) {
     }
 }
 
-/// Reads `eq` or `neq` from the first non-empty line, ignoring case.
+/// Reads `eq`, `neq` or `unknown` from the first non-empty line, ignoring case.
 pub fn parse_prediction(output: &str) -> Outcome {
     let line = output.lines().map(str::trim).find(|l| !l.is_empty());
     match line.map(str::to_lowercase).as_deref() {
         Some("eq") => Outcome::Predicted(Kind::Eq),
         Some("neq") => Outcome::Predicted(Kind::Neq),
+        Some("unknown") => Outcome::Unknown,
         _ => Outcome::Invalid(line.unwrap_or_default().chars().take(40).collect()),
     }
 }
 
 /// Scores of one class (`eq` or `neq`) seen as the positive one.
 ///
-/// A case without a prediction (timeout, crash, ...) is a false negative for
-/// its own class and does not count against the precision of either class.
+/// A case without a prediction (unknown, timeout, crash, ...) is a false
+/// negative for its own class and does not count against the precision of
+/// either class.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ClassScore {
     /// Cases of this class.
@@ -196,6 +202,7 @@ pub struct Summary {
     pub neq: ClassScore,
     pub total_time: Duration,
     pub slowest: Option<(CaseId, Duration)>,
+    pub unknown: usize,
     pub timeouts: usize,
     pub crashes: usize,
     pub invalid: usize,
@@ -222,6 +229,7 @@ impl Summary {
             }
             match r.outcome {
                 Outcome::Predicted(_) => {}
+                Outcome::Unknown => summary.unknown += 1,
                 Outcome::Invalid(_) => summary.invalid += 1,
                 Outcome::Crashed(_) => summary.crashes += 1,
                 Outcome::Timeout => summary.timeouts += 1,
@@ -288,6 +296,7 @@ mod tests {
             parse_prediction("\n  NEQ \nmore"),
             Outcome::Predicted(Kind::Neq)
         );
+        assert_eq!(parse_prediction("Unknown\n"), Outcome::Unknown);
         assert_eq!(parse_prediction("maybe"), Outcome::Invalid("maybe".into()));
         assert_eq!(parse_prediction(""), Outcome::Invalid(String::new()));
     }
@@ -331,11 +340,13 @@ mod tests {
             result("a-c-Eq", Outcome::Timeout),
             result("a-d-Neq", Outcome::Predicted(Kind::Neq)),
             result("a-e-Neq", Outcome::Predicted(Kind::Eq)),
+            result("a-f-Neq", Outcome::Unknown),
         ];
         let summary = Summary::new(&results);
         assert_eq!(summary.correct, 2);
-        assert_eq!(summary.accuracy(), 40.0);
+        assert_eq!(summary.accuracy(), 100.0 * 2.0 / 6.0);
         assert_eq!(summary.timeouts, 1);
+        assert_eq!(summary.unknown, 1);
 
         let eq = summary.eq;
         assert_eq!(
@@ -350,11 +361,12 @@ mod tests {
         assert_eq!(eq.recall(), Some(1.0 / 3.0));
         assert_eq!(eq.f1(), 0.4);
 
+        // The unknown answer lowers the recall of `neq`, not its precision.
         let neq = summary.neq;
         assert_eq!(neq.precision(), Some(0.5));
-        assert_eq!(neq.recall(), Some(0.5));
-        assert_eq!(neq.f1(), 0.5);
-        assert!((summary.macro_f1() - 0.45).abs() < 1e-12);
+        assert_eq!(neq.recall(), Some(1.0 / 3.0));
+        assert_eq!(neq.f1(), 0.4);
+        assert!((summary.macro_f1() - 0.4).abs() < 1e-12);
     }
 
     #[test]

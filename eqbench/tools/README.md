@@ -77,8 +77,8 @@ merged `change(old, new)` program, hence last.
 
 ## Work shared by the adapters
 
-- **`unknown`**: most tools can answer it (`UNKNOWN`, `MAYBE_EQ`, depth limit...),
-  but `analyse` counts it as an invalid output for now.
+- **`unknown`**: most tools can answer it (`UNKNOWN`, `MAYBE_EQ`, depth limit...).
+  The adapter prints `unknown`, which `analyse` counts as no prediction.
 - **Method under comparison**: the tools need it, either by name, as `snippet`,
   or through a miter. It is the `method` of `J-Desc.json`, not passed to the tool yet.
 - **Miter equality**: NaN, `-0.0`, exceptions, arrays and objects must be compared

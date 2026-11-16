@@ -51,8 +51,8 @@ enum Command {
     /// Run an analysis tool on every case and score its predictions (accuracy, F1, time)
     ///
     /// The tool is called as `<cmd…> <old-dir> <new-dir>`, the directories
-    /// holding the JSON of every class of both versions, and must print `eq`
-    /// or `neq` on the first line of its output.
+    /// holding the JSON of every class of both versions, and must print `eq`,
+    /// `neq` or `unknown` on the first line of its output.
     Analyse {
         /// The tool and its arguments
         #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
@@ -148,6 +148,8 @@ fn analyse(dataset: &Dataset, cmd: &[String]) -> Result<()> {
         let result = run_case(cmd, case, &layout)?;
         let mark = if result.is_correct() {
             style.green("✓")
+        } else if result.outcome == Outcome::Unknown {
+            style.dim("?")
         } else {
             style.red("✗")
         };
@@ -193,6 +195,7 @@ fn analyse(dataset: &Dataset, cmd: &[String]) -> Result<()> {
             score.f1()
         );
     }
+    outln!("unknown   {}/{}", summary.unknown, summary.total);
     let slowest = summary
         .slowest
         .as_ref()
