@@ -1,9 +1,18 @@
 # Reference tools
 
 Equivalence checkers to evaluate on the 248 method-level pairs with `eqbench analyse`.
-Each tool will get its own `tools/<tool>/` directory with a `flake.nix` and an
-adapter script that turns its output into `eq` / `neq`, so that the root flake
-stays small.
+Each tool gets its own `tools/<tool>/` directory with a `flake.nix` and an
+adapter script that turns its output into `eq` / `neq` / `unknown`, so that the
+root flake stays small.
+
+```sh
+nix build ./eqbench/tools/pasda -o target/pasda
+just eqbench analyse target/pasda/bin/pasda-eqbench
+```
+
+| Tool | Status |
+|---|---|
+| [PASDA](pasda) | Done, tested on macOS (aarch64), not on Linux yet. Answers `unknown` for `void` methods, non-primitive parameters, methods outside `oldV` / `newV` and pairs its instrumentation cannot align. `--budget` (default 9 s, below the 10 s of `analyse`) and `--depth` (default 10) can be passed before the tool arguments. |
 
 ## Shortlist
 

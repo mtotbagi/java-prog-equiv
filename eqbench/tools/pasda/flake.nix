@@ -1,5 +1,5 @@
 {
-  description = "PASDA (Glock, Pichler, Pinzger, JSS 2024), built for eqbench";
+  description = "PASDA (Glock, Pichler, Pinzger, JSS 2024) as an eqbench analysis tool";
 
   # deps.json must match the build.gradle of this exact PASDA commit. PASDA
   # builds with Gradle 7, removed from nixpkgs in 2026-01, hence an older
@@ -95,11 +95,20 @@
             runHook postInstall
           '';
         });
+
+        adapter = pkgs.writeShellApplication {
+          name = "pasda-eqbench";
+          runtimeInputs = [jdk pkgs.z3 pkgs.python3];
+          text = ''
+            exec python3 -I ${./adapter.py} --pasda ${pasdaRunners}/share/pasda "$@"
+          '';
+        };
       in {
         packages = {
-          default = pasdaRunners;
+          default = adapter;
           pasda = pasdaRunners;
         };
+        apps.default = flake-utils.lib.mkApp {drv = adapter;};
       }
     );
 }
