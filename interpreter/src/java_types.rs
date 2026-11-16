@@ -46,6 +46,8 @@ impl StackValue {
                 ArrayValue::Boolean(*i != 0, bv.extract(1, 0))
             }
             (StackValue::Float(f, ast), ArrayType::Float) => ArrayValue::Float(*f, ast.clone()),
+            (StackValue::Double(f, ast), ArrayType::Float) => ArrayValue::Double(*f, ast.clone()),
+            (StackValue::Long(l, ast), ArrayType::Long) => ArrayValue::Long(*l, ast.clone()),
             _ => panic!("Cannot convert {:?} to {:?}", self, ty),
         }
     }
