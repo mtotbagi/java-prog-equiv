@@ -1,0 +1,10 @@
+[package]
+name = "prog-equiv"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+eqbench = { version = "0.1.0", path = "../eqbench" }
+interpreter = {version = "0.1.0", path = "../interpreter" }
+serde_json = "1.0.151"
+z3 = "0.22.0"
