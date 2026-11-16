@@ -18,7 +18,7 @@ The 24 whole-program pairs (no `J-Desc.json`) are left out.
 
 ```sh
 $ just eqbench build
-$ just eqbench analyse ./my-tool
+$ just eqbench analyse ./my-tool              # or a tool of tools/, e.g. ./eqbench/tools/pasda
 ...
 accuracy  135/248 (54.4%)
 f1        0.352 (mean of eq and neq)

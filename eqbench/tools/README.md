@@ -6,9 +6,11 @@ adapter script that turns its output into `eq` / `neq` / `unknown`, so that the
 root flake stays small.
 
 ```sh
-nix build ./eqbench/tools/pasda -o target/pasda
-just eqbench analyse target/pasda/bin/pasda-eqbench
+just eqbench analyse ./eqbench/tools/pasda
 ```
+
+`analyse` builds the flake of the directory with nix before the first case,
+then runs the only program of its default package.
 
 | Tool | Status |
 |---|---|

@@ -6,7 +6,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 
-use eqbench::analyse::{CaseResult, Outcome, Summary, TIMEOUT, run_case};
+use eqbench::analyse::{CaseResult, Outcome, Summary, TIMEOUT, resolve_tool, run_case};
 use eqbench::build::Layout;
 use eqbench::case::{Case, Dataset, Kind};
 use eqbench::diff::whole_file_diff;
@@ -53,7 +53,8 @@ enum Command {
     /// The tool is called as `<cmd…> <old-dir> <new-dir> <method>`, the
     /// directories holding the source and the JSON of every class of both
     /// versions and `<method>` the method to compare, and must print `eq`,
-    /// `neq` or `unknown` on the first line of its output.
+    /// `neq` or `unknown` on the first line of its output. A directory holding
+    /// a `flake.nix`, such as `eqbench/tools/pasda`, is built with nix first.
     Analyse {
         /// The tool and its arguments
         #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
@@ -135,6 +136,7 @@ fn analyse(dataset: &Dataset, cmd: &[String]) -> Result<()> {
     if !layout.root.join("cases").is_dir() {
         bail!("nothing is built, run `eqbench build` first");
     }
+    let tool = resolve_tool(cmd)?;
     let style = Style::stdout();
     let width = id_width(dataset);
     eprintln!(
@@ -146,7 +148,7 @@ fn analyse(dataset: &Dataset, cmd: &[String]) -> Result<()> {
 
     let mut results: Vec<CaseResult> = Vec::with_capacity(dataset.cases.len());
     for case in &dataset.cases {
-        let result = run_case(cmd, case, &layout)?;
+        let result = run_case(&tool, case, &layout)?;
         let mark = if result.is_correct() {
             style.green("✓")
         } else if result.outcome == Outcome::Unknown {

@@ -7,13 +7,14 @@
 //! naming the method to compare (`method name` of `J-Desc.json`). It must print `eq`, `neq` or `unknown` on the first line
 //! of its standard output.
 
+use std::fs;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 
 use crate::build::Layout;
 use crate::case::{Case, CaseId, Kind, Version};
@@ -61,6 +62,50 @@ impl CaseResult {
     pub fn is_correct(&self) -> bool {
         self.outcome == Outcome::Predicted(self.id.kind)
     }
+}
+
+/// The command to run for `cmd`.
+///
+/// A tool given as a directory holding a `flake.nix` (`eqbench/tools/<tool>`)
+/// is built once with nix, before any case, and the only program of its
+/// default package is run instead, with the rest of `cmd` as arguments.
+pub fn resolve_tool(cmd: &[String]) -> Result<Vec<String>> {
+    let (first, rest) = cmd.split_first().context("no command given")?;
+    if !Path::new(first).join("flake.nix").is_file() {
+        return Ok(cmd.to_vec());
+    }
+    // A bare relative path would be read as a flake registry name.
+    let flake = if first.starts_with('/') || first.starts_with('.') {
+        first.clone()
+    } else {
+        format!("./{first}")
+    };
+    eprintln!("building {flake} with nix");
+    let output = Command::new("nix")
+        .args(["--extra-experimental-features", "nix-command flakes"])
+        .args(["build", "--no-link", "--print-out-paths", &flake])
+        .stderr(Stdio::inherit())
+        .output()
+        .context("cannot run nix")?;
+    if !output.status.success() {
+        bail!("cannot build {flake} with nix");
+    }
+    let stdout = String::from_utf8(output.stdout).context("nix printed a non UTF-8 path")?;
+    let out = stdout
+        .lines()
+        .last()
+        .context("nix printed no output path")?;
+    let bin = Path::new(out.trim()).join("bin");
+    let programs: Vec<PathBuf> = fs::read_dir(&bin)
+        .with_context(|| format!("{flake} has no program, {} is missing", bin.display()))?
+        .map(|entry| entry.map(|e| e.path()))
+        .collect::<Result<_, _>>()?;
+    let [program] = programs.as_slice() else {
+        bail!("{} should hold exactly one program", bin.display());
+    };
+    let mut resolved = vec![program.to_string_lossy().into_owned()];
+    resolved.extend(rest.iter().cloned());
+    Ok(resolved)
 }
 
 /// Runs the tool on one case.
@@ -384,6 +429,13 @@ mod tests {
         assert_eq!(summary.neq.f1(), 0.0);
         assert!((summary.eq.f1() - 2.0 / 3.0).abs() < 1e-12);
         assert_eq!(Summary::new(&[]).macro_f1(), 0.0);
+    }
+
+    #[test]
+    fn keeps_commands_that_are_not_flakes() {
+        let cmd = ["sh".to_string(), "-c".to_string(), "echo eq".to_string()];
+        assert_eq!(resolve_tool(&cmd).unwrap(), cmd);
+        assert!(resolve_tool(&[]).is_err());
     }
 
     #[test]
