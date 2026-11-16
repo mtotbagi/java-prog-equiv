@@ -36,7 +36,8 @@ First runs on the 248 pairs, 10 s per pair, on an Apple M1 Pro (8 cores, 16 GB).
   `lib`) while the pair is equivalent for its client only (`main`, `client`):
   in `CLEVER-Sub-Eq`, `foo(a, b)` returns `a - b` against `b - a`, called as
   `foo(5, 900)` against `foo(900, 5)`. These answers are right for the method;
-  `analyse` must pass the client instead.
+  `analyse` now passes the client (and the entry point of REVE's `triangular`),
+  these results predate it.
 - The only wrong `eq` is PASDA on `ran-ranzero-Neq`.
 - ARDiff and DSE ran 6 pairs at a time: their times, and so their timeouts, are
   inflated compared to PASDA.
@@ -116,7 +117,9 @@ merged `change(old, new)` program, hence last.
 - **`unknown`**: most tools can answer it (`UNKNOWN`, `MAYBE_EQ`, depth limit...).
   The adapter prints `unknown`, which `analyse` counts as no prediction.
 - **Method under comparison**: the tools need it, either by name, as `snippet`,
-  or through a miter. `analyse` passes it as third argument (`method` of `J-Desc.json`).
+  or through a miter. `analyse` passes it as third argument: the `method` of
+  `J-Desc.json`, or the entry point named by `program name` for CLEVER and REVE
+  (`Sub.main` → `main`).
 - **Miter equality**: NaN, `-0.0`, exceptions, arrays and objects must be compared
   the same way for every tool.
 - **JDK**: the JPF-based tools need Java 8 (`jdk8` in nixpkgs).

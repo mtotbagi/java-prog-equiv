@@ -256,7 +256,7 @@ fn list(dataset: &Dataset) -> Result<()> {
     let method_width = dataset
         .cases
         .iter()
-        .map(|c| c.desc.method.len())
+        .map(|c| c.desc.entry().len())
         .max()
         .unwrap_or(0)
         .max("METHOD".len());
@@ -274,7 +274,7 @@ fn list(dataset: &Dataset) -> Result<()> {
             "{:width$}  {:4}  {:method_width$}  {:>4}  {:>7}",
             case.id.to_string(),
             case.id.kind,
-            case.desc.method,
+            case.desc.entry(),
             case.desc.loc,
             case.desc.changes.len()
         );
@@ -303,7 +303,15 @@ fn details(dataset: &Dataset, case: &Case) -> Result<()> {
     outln!("{} ({verdict})", style.bold(&case.id.to_string()));
 
     let desc = &case.desc;
-    outln!("method           {}", desc.method);
+    if desc.entry() == desc.method {
+        outln!("method           {}", desc.method);
+    } else {
+        outln!(
+            "method           {} (changed: {})",
+            desc.entry(),
+            desc.method
+        );
+    }
     outln!("LOC              {}", desc.loc);
     outln!("loops            {}", desc.loops);
     outln!("non-linear       {}", desc.non_linear);

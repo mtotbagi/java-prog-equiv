@@ -4,7 +4,8 @@
 //! The tool is called as `<cmd…> <old-dir> <new-dir> <method>`, the two
 //! directories holding the source (`oldV.java` / `newV.java`) and the JSON
 //! (jvm2json) of every class of the two versions of a case, and `<method>`
-//! naming the method to compare (`method name` of `J-Desc.json`). It must
+//! naming the method to compare (`Desc::entry`: `method name` of
+//! `J-Desc.json`, or the entry point of CLEVER and REVE programs). It must
 //! print `eq`, `neq` or `unknown` on the first line of its standard output.
 //! The tool is killed after a timeout, which it can read in seconds from
 //! `EQBENCH_TIMEOUT` to plan its own work.
@@ -171,7 +172,7 @@ pub fn run_case(
     let old = layout.case_dir(&case.id, Version::Old);
     let new = layout.case_dir(&case.id, Version::New);
     let (outcome, elapsed) = if old.is_dir() && new.is_dir() {
-        run_tool(cmd, &old, &new, &case.desc.method, timeout)?
+        run_tool(cmd, &old, &new, case.desc.entry(), timeout)?
     } else {
         (Outcome::NotBuilt, Duration::ZERO)
     };
