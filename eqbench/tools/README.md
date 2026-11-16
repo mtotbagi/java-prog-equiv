@@ -14,7 +14,7 @@ then runs the only program of its default package.
 
 | Tool | Status |
 |---|---|
-| [PASDA](pasda) | Done, tested on macOS (aarch64), not on Linux yet. Answers `unknown` for `void` methods, non-primitive parameters, methods outside `oldV` / `newV` and pairs its instrumentation cannot align. `--budget` (default 9 s, below the 10 s of `analyse`) and `--depth` (default 10) can be passed before the tool arguments. |
+| [PASDA](pasda) | Done, tested on macOS (aarch64), not on Linux yet. Answers `unknown` for `void` methods, non-primitive parameters, methods outside `oldV` / `newV`, methods using instance members and pairs its instrumentation cannot align. `--budget` (default 9 s, below the 10 s of `analyse`) and `--depth` (default 10) can be passed before the tool arguments. |
 
 ## Shortlist
 
