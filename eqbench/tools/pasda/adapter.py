@@ -1,11 +1,14 @@
 """eqbench adapter for PASDA (https://github.com/glockyco/PASDA).
 
-    pasda-eqbench [--budget SECONDS] [--depth N] <old-dir> <new-dir> <method>
+    pasda-eqbench [--tool PASDA|ARDiff|DSE] [--budget SECONDS] [--depth N]
+                  <old-dir> <new-dir> <method>
 
 Makes the method under comparison the `public static snippet` method that
-PASDA expects, runs the two runners of PASDA in a scratch directory and
-prints `eq`, `neq` or `unknown`. The reason of an `unknown` answer is printed
-on the standard error.
+PASDA expects, runs the tool in a scratch directory and prints `eq`, `neq` or
+`unknown`. The reason of an `unknown` answer is printed on the standard error.
+
+Besides PASDA, its repository ships the versions of ARDiff and DSE that its
+authors fixed; they run from the same JAR.
 """
 
 import argparse
@@ -25,15 +28,23 @@ PRIMITIVES = {"int", "long", "short", "byte", "char", "boolean", "float", "doubl
 BASE_JAR = "build/libs/ARDiff-base-1.0-SNAPSHOT-all.jar"
 DIFF_JAR = "build/libs/ARDiff-diff-1.0-SNAPSHOT-all.jar"
 VERDICTS = {"EQ": "eq", "NEQ": "neq"}
+# Arguments of the base runner for each tool, and the name its runs are
+# recorded under (PASDA also needs the differencing runner).
+TOOLS = {
+    "PASDA": (["--tool", "P", "--s", "coral"], "PASDA-diff"),
+    "ARDiff": (["--tool", "A", "--s", "coral", "--H", "H123"], "ARDiff-base"),
+    "DSE": (["--tool", "D", "--s", "coral"], "DSE-base"),
+}
 
 
 class Unknown(Exception):
-    """PASDA cannot give an answer for this pair."""
+    """The tool cannot give an answer for this pair."""
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--pasda", type=Path, required=True, help="share/pasda of the nix package")
+    parser.add_argument("--tool", choices=TOOLS, default="PASDA")
     parser.add_argument("--budget", type=float, default=9.0, help="seconds for the whole run")
     parser.add_argument("--depth", type=int, default=10, help="depth limit of the symbolic execution")
     parser.add_argument("old", type=Path)
@@ -45,12 +56,12 @@ def main() -> None:
     try:
         old = prepare((args.old / "oldV.java").read_text(), "oldV", args.method)
         new = prepare((args.new / "newV.java").read_text(), "newV", args.method)
-        verdict = run(args.pasda, old, new, args.depth, deadline)
+        verdict = run(args.pasda, args.tool, old, new, args.depth, deadline)
     except Unknown as reason:
         print(f"unknown: {reason}", file=sys.stderr)
         verdict = "UNKNOWN"
     print(VERDICTS.get(verdict, "unknown"))
-    print(f"PASDA: {verdict}")
+    print(f"{args.tool}: {verdict}")
 
 
 def prepare(source: str, cls: str, method: str) -> str:
@@ -83,8 +94,9 @@ def prepare(source: str, cls: str, method: str) -> str:
     return re.sub(r"^\s*package\s+[\w.]+\s*;", f"package {PACKAGE};", source, count=1, flags=re.M)
 
 
-def run(pasda: Path, old: str, new: str, depth: int, deadline: float) -> str:
-    """Runs PASDA on the two prepared sources, returns its verdict."""
+def run(pasda: Path, tool: str, old: str, new: str, depth: int, deadline: float) -> str:
+    """Runs `tool` on the two prepared sources, returns its verdict."""
+    base_args, recorded_as = TOOLS[tool]
     with tempfile.TemporaryDirectory(prefix="pasda-eqbench-") as tmp:
         impl = Path(tmp) / "implementation"
         # PASDA wants an Eq or NEq directory, it stores it but never reads it.
@@ -97,11 +109,15 @@ def run(pasda: Path, old: str, new: str, depth: int, deadline: float) -> str:
 
         output = java(impl, deadline, BASE_JAR,
                       "--path1", f"{pair}/oldV.java", "--path2", f"{pair}/newV.java",
-                      "--tool", "P", "--s", "coral", "--b", str(depth), "--t", str(seconds_left(deadline)))
-        if not (pair_dir / "instrumented" / "IDiffPASDA-Parameters.txt").is_file():
-            raise Unknown("the instrumentation failed:\n" + "\n".join(output.strip().splitlines()[-15:]))
-        java(impl, deadline, DIFF_JAR, pair, "PASDA", str(seconds_left(deadline)), str(depth))
-        return read_verdict(impl / "analysis" / "results" / "sqlite.db")
+                      *base_args, "--b", str(depth), "--t", str(seconds_left(deadline)))
+        if tool == "PASDA":
+            if not (pair_dir / "instrumented" / "IDiffPASDA-Parameters.txt").is_file():
+                raise Unknown("the instrumentation failed:\n" + tail(output))
+            output = java(impl, deadline, DIFF_JAR, pair, "PASDA", str(seconds_left(deadline)), str(depth))
+        verdict = read_verdict(impl / "analysis" / "results" / "sqlite.db", recorded_as)
+        if verdict is None:
+            raise Unknown(f"{tool} recorded no result:\n" + tail(output))
+        return verdict
 
 
 def setup_implementation(pasda: Path, impl: Path) -> None:
@@ -142,14 +158,17 @@ def seconds_left(deadline: float) -> int:
     return left
 
 
-def read_verdict(db_path: Path) -> str:
+def read_verdict(db_path: Path, recorded_as: str) -> str | None:
     with sqlite3.connect(db_path) as db:
         row = db.execute(
-            "SELECT result FROM run WHERE id = (SELECT max(run_id) FROM settings WHERE tool = 'PASDA-diff')"
+            "SELECT result FROM run WHERE id = (SELECT max(run_id) FROM settings WHERE tool = ?)",
+            (recorded_as,),
         ).fetchone()
-    if row is None or row[0] is None:
-        raise Unknown("PASDA recorded no result")
-    return row[0]
+    return row[0] if row else None
+
+
+def tail(output: str) -> str:
+    return "\n".join(output.strip().splitlines()[-15:])
 
 
 if __name__ == "__main__":

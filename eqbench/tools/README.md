@@ -6,15 +6,16 @@ adapter script that turns its output into `eq` / `neq` / `unknown`, so that the
 root flake stays small.
 
 ```sh
-just eqbench analyse ./eqbench/tools/pasda
+just eqbench analyse ./eqbench/tools/pasda               # PASDA
+just eqbench analyse ./eqbench/tools/pasda --tool ARDiff  # ARDiff, DSE
 ```
 
 `analyse` builds the flake of the directory with nix before the first case,
-then runs the only program of its default package.
+then runs the only program of its default package with the given arguments.
 
 | Tool | Status |
 |---|---|
-| [PASDA](pasda) | Done, tested on macOS (aarch64), not on Linux yet. Answers `unknown` for `void` methods, non-primitive parameters, methods outside `oldV` / `newV`, methods using instance members and pairs its instrumentation cannot align. `--budget` (default 9 s, below the 10 s of `analyse`) and `--depth` (default 10) can be passed before the tool arguments. |
+| [PASDA, ARDiff, DSE](pasda) | Done, tested on macOS (aarch64), not on Linux yet. ARDiff and DSE are the versions fixed by the authors of PASDA, run from the same build with `--tool`. They answer `unknown` for `void` methods, non-primitive parameters, methods outside `oldV` / `newV`, methods using instance members and pairs PASDA's instrumentation cannot align. `--budget` (default 9 s, below the 10 s of `analyse`) and `--depth` (default 10) can be passed too. |
 
 ## Shortlist
 
