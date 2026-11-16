@@ -152,10 +152,48 @@ pub fn parse_prediction(output: &str) -> Outcome {
     }
 }
 
+/// Scores of one class (`eq` or `neq`) seen as the positive one.
+///
+/// A case without a prediction (timeout, crash, ...) is a false negative for
+/// its own class and does not count against the precision of either class.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ClassScore {
+    /// Cases of this class.
+    pub actual: usize,
+    /// Cases predicted as this class.
+    pub predicted: usize,
+    /// Cases of this class predicted as this class (true positives).
+    pub correct: usize,
+}
+
+impl ClassScore {
+    /// `None` when the tool never predicted this class.
+    pub fn precision(&self) -> Option<f64> {
+        (self.predicted > 0).then(|| self.correct as f64 / self.predicted as f64)
+    }
+
+    /// `None` when the dataset has no case of this class.
+    pub fn recall(&self) -> Option<f64> {
+        (self.actual > 0).then(|| self.correct as f64 / self.actual as f64)
+    }
+
+    /// `2·TP / (2·TP + FP + FN)`, 0 when there is nothing to score.
+    pub fn f1(&self) -> f64 {
+        let denominator = self.predicted + self.actual;
+        if denominator == 0 {
+            0.0
+        } else {
+            2.0 * self.correct as f64 / denominator as f64
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct Summary {
     pub total: usize,
     pub correct: usize,
+    pub eq: ClassScore,
+    pub neq: ClassScore,
     pub total_time: Duration,
     pub slowest: Option<(CaseId, Duration)>,
     pub timeouts: usize,
@@ -172,6 +210,12 @@ impl Summary {
         };
         for r in results {
             summary.correct += usize::from(r.is_correct());
+            summary.class_mut(r.id.kind).actual += 1;
+            if let Outcome::Predicted(kind) = r.outcome {
+                let class = summary.class_mut(kind);
+                class.predicted += 1;
+                class.correct += usize::from(kind == r.id.kind);
+            }
             summary.total_time += r.elapsed;
             if summary.slowest.as_ref().is_none_or(|(_, t)| r.elapsed > *t) {
                 summary.slowest = Some((r.id.clone(), r.elapsed));
@@ -202,6 +246,26 @@ impl Summary {
             0.0
         } else {
             100.0 * self.correct as f64 / self.total as f64
+        }
+    }
+
+    /// Mean of the F1 scores of `eq` and `neq`, so that neither class is
+    /// favoured by the choice of a positive one.
+    pub fn macro_f1(&self) -> f64 {
+        (self.eq.f1() + self.neq.f1()) / 2.0
+    }
+
+    pub fn class(&self, kind: Kind) -> &ClassScore {
+        match kind {
+            Kind::Eq => &self.eq,
+            Kind::Neq => &self.neq,
+        }
+    }
+
+    fn class_mut(&mut self, kind: Kind) -> &mut ClassScore {
+        match kind {
+            Kind::Eq => &mut self.eq,
+            Kind::Neq => &mut self.neq,
         }
     }
 }
@@ -249,6 +313,62 @@ mod tests {
             Outcome::Timeout
         );
         assert!(start.elapsed() < Duration::from_secs(2));
+    }
+
+    fn result(id: &str, outcome: Outcome) -> CaseResult {
+        CaseResult {
+            id: id.parse().unwrap(),
+            outcome,
+            elapsed: Duration::from_millis(10),
+        }
+    }
+
+    #[test]
+    fn scores_each_class() {
+        let results = [
+            result("a-a-Eq", Outcome::Predicted(Kind::Eq)),
+            result("a-b-Eq", Outcome::Predicted(Kind::Neq)),
+            result("a-c-Eq", Outcome::Timeout),
+            result("a-d-Neq", Outcome::Predicted(Kind::Neq)),
+            result("a-e-Neq", Outcome::Predicted(Kind::Eq)),
+        ];
+        let summary = Summary::new(&results);
+        assert_eq!(summary.correct, 2);
+        assert_eq!(summary.accuracy(), 40.0);
+        assert_eq!(summary.timeouts, 1);
+
+        let eq = summary.eq;
+        assert_eq!(
+            eq,
+            ClassScore {
+                actual: 3,
+                predicted: 2,
+                correct: 1
+            }
+        );
+        assert_eq!(eq.precision(), Some(0.5));
+        assert_eq!(eq.recall(), Some(1.0 / 3.0));
+        assert_eq!(eq.f1(), 0.4);
+
+        let neq = summary.neq;
+        assert_eq!(neq.precision(), Some(0.5));
+        assert_eq!(neq.recall(), Some(0.5));
+        assert_eq!(neq.f1(), 0.5);
+        assert!((summary.macro_f1() - 0.45).abs() < 1e-12);
+    }
+
+    #[test]
+    fn scores_a_tool_that_always_answers_the_same() {
+        let results = [
+            result("a-a-Eq", Outcome::Predicted(Kind::Eq)),
+            result("a-b-Neq", Outcome::Predicted(Kind::Eq)),
+        ];
+        let summary = Summary::new(&results);
+        assert_eq!(summary.neq.precision(), None);
+        assert_eq!(summary.neq.recall(), Some(0.0));
+        assert_eq!(summary.neq.f1(), 0.0);
+        assert!((summary.eq.f1() - 2.0 / 3.0).abs() < 1e-12);
+        assert_eq!(Summary::new(&[]).macro_f1(), 0.0);
     }
 
     #[test]
