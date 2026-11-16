@@ -51,9 +51,9 @@ enum Command {
     /// Run an analysis tool on every case and score its predictions (accuracy, F1, time)
     ///
     /// The tool is called as `<cmd…> <old-dir> <new-dir> <method>`, the
-    /// directories holding the JSON of every class of both versions and
-    /// `<method>` the method to compare, and must print `eq`, `neq` or
-    /// `unknown` on the first line of its output.
+    /// directories holding the source and the JSON of every class of both
+    /// versions and `<method>` the method to compare, and must print `eq`,
+    /// `neq` or `unknown` on the first line of its output.
     Analyse {
         /// The tool and its arguments
         #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
@@ -132,7 +132,7 @@ fn build(dataset: &Dataset) -> Result<()> {
 
 fn analyse(dataset: &Dataset, cmd: &[String]) -> Result<()> {
     let layout = Layout::new(output_dir());
-    if !layout.root.join("decompiled").is_dir() {
+    if !layout.root.join("cases").is_dir() {
         bail!("nothing is built, run `eqbench build` first");
     }
     let style = Style::stdout();

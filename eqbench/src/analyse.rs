@@ -2,9 +2,9 @@
 //! ground truth.
 //!
 //! The tool is called as `<cmd…> <old-dir> <new-dir> <method>`, the two
-//! directories holding the JSON (jvm2json) of every class of the two versions
-//! of a case, and `<method>` naming the method to compare (`method name` of
-//! `J-Desc.json`). It must print `eq`, `neq` or `unknown` on the first line
+//! directories holding the source (`oldV.java` / `newV.java`) and the JSON
+//! (jvm2json) of every class of the two versions of a case, and `<method>`
+//! naming the method to compare (`method name` of `J-Desc.json`). It must print `eq`, `neq` or `unknown` on the first line
 //! of its standard output.
 
 use std::io::Read;
@@ -65,8 +65,8 @@ impl CaseResult {
 
 /// Runs the tool on one case.
 pub fn run_case(cmd: &[String], case: &Case, layout: &Layout) -> Result<CaseResult> {
-    let old = layout.decompiled(&case.id, Version::Old);
-    let new = layout.decompiled(&case.id, Version::New);
+    let old = layout.case_dir(&case.id, Version::Old);
+    let new = layout.case_dir(&case.id, Version::New);
     let (outcome, elapsed) = if old.is_dir() && new.is_dir() {
         run_tool(cmd, &old, &new, &case.desc.method, TIMEOUT)?
     } else {
