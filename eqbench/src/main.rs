@@ -1,12 +1,12 @@
 use std::fs;
 use std::io::{self, Write};
 use std::process::ExitCode;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 
-use eqbench::analyse::{CaseResult, Outcome, Summary, TIMEOUT, resolve_tool, run_case};
+use eqbench::analyse::{Outcome, Summary, TIMEOUT, resolve_tool, run_cases};
 use eqbench::build::Layout;
 use eqbench::case::{Case, Dataset, Kind};
 use eqbench::diff::whole_file_diff;
@@ -56,6 +56,12 @@ enum Command {
     /// `neq` or `unknown` on the first line of its output. A directory holding
     /// a `flake.nix`, such as `eqbench/tools/pasda`, is built with nix first.
     Analyse {
+        /// Seconds given to the tool for one case, also passed to it as `EQBENCH_TIMEOUT`
+        #[arg(long, default_value_t = TIMEOUT.as_secs(), value_parser = clap::value_parser!(u64).range(1..))]
+        timeout: u64,
+        /// Number of cases analysed at the same time
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u64).range(1..))]
+        jobs: u64,
         /// The tool and its arguments
         #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
         cmd: Vec<String>,
@@ -91,7 +97,9 @@ fn run(command: Command) -> Result<()> {
         }
         Command::Build => build(&load()?)?,
         Command::Clean => clean()?,
-        Command::Analyse { cmd } => analyse(&load()?, &cmd)?,
+        Command::Analyse { timeout, jobs, cmd } => {
+            analyse(&load()?, &cmd, Duration::from_secs(timeout), jobs as usize)?
+        }
     }
     Ok(())
 }
@@ -131,7 +139,7 @@ fn build(dataset: &Dataset) -> Result<()> {
     Ok(())
 }
 
-fn analyse(dataset: &Dataset, cmd: &[String]) -> Result<()> {
+fn analyse(dataset: &Dataset, cmd: &[String], timeout: Duration, jobs: usize) -> Result<()> {
     let layout = Layout::new(output_dir());
     if !layout.root.join("cases").is_dir() {
         bail!("nothing is built, run `eqbench build` first");
@@ -140,15 +148,14 @@ fn analyse(dataset: &Dataset, cmd: &[String]) -> Result<()> {
     let style = Style::stdout();
     let width = id_width(dataset);
     eprintln!(
-        "analysing {} cases with `{}` (timeout {}s)",
+        "analysing {} cases with `{}` (timeout {}s, {jobs} jobs)",
         dataset.cases.len(),
         cmd.join(" "),
-        TIMEOUT.as_secs()
+        timeout.as_secs()
     );
 
-    let mut results: Vec<CaseResult> = Vec::with_capacity(dataset.cases.len());
-    for case in &dataset.cases {
-        let result = run_case(&tool, case, &layout)?;
+    let start = Instant::now();
+    let results = run_cases(&tool, &dataset.cases, &layout, timeout, jobs, |result| {
         let mark = if result.is_correct() {
             style.green("✓")
         } else if result.outcome == Outcome::Unknown {
@@ -167,8 +174,9 @@ fn analyse(dataset: &Dataset, cmd: &[String]) -> Result<()> {
             line.push_str(&style.dim(&format!("  output: {output:?}")));
         }
         outln!("{line}");
-        results.push(result);
-    }
+        Ok(())
+    })?;
+    let wall = start.elapsed();
 
     let summary = Summary::new(&results);
     outln!();
@@ -205,9 +213,10 @@ fn analyse(dataset: &Dataset, cmd: &[String]) -> Result<()> {
         .map(|(id, t)| format!(", max {} ({id})", format_duration(*t)))
         .unwrap_or_default();
     outln!(
-        "time      total {}, mean {}{slowest}",
+        "time      total {}, mean {}{slowest}, wall {} with {jobs} jobs",
         format_duration(summary.total_time),
         format_duration(summary.mean_time()),
+        format_duration(wall),
     );
     outln!(
         "errors    {} timeouts, {} crashes, {} invalid outputs, {} not built",

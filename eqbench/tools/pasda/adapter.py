@@ -45,7 +45,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--pasda", type=Path, required=True, help="share/pasda of the nix package")
     parser.add_argument("--tool", choices=TOOLS, default="PASDA")
-    parser.add_argument("--budget", type=float, default=9.0, help="seconds for the whole run")
+    # One second below the timeout of `eqbench analyse`, to answer before being killed.
+    budget = float(os.environ.get("EQBENCH_TIMEOUT", "10")) - 1
+    parser.add_argument("--budget", type=float, default=budget, help="seconds for the whole run")
     parser.add_argument("--depth", type=int, default=10, help="depth limit of the symbolic execution")
     parser.add_argument("old", type=Path)
     parser.add_argument("new", type=Path)

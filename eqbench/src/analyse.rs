@@ -4,13 +4,18 @@
 //! The tool is called as `<cmd…> <old-dir> <new-dir> <method>`, the two
 //! directories holding the source (`oldV.java` / `newV.java`) and the JSON
 //! (jvm2json) of every class of the two versions of a case, and `<method>`
-//! naming the method to compare (`method name` of `J-Desc.json`). It must print `eq`, `neq` or `unknown` on the first line
-//! of its standard output.
+//! naming the method to compare (`method name` of `J-Desc.json`). It must
+//! print `eq`, `neq` or `unknown` on the first line of its standard output.
+//! The tool is killed after a timeout, which it can read in seconds from
+//! `EQBENCH_TIMEOUT` to plan its own work.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -19,7 +24,7 @@ use anyhow::{Context, Result, bail};
 use crate::build::Layout;
 use crate::case::{Case, CaseId, Kind, Version};
 
-/// Time given to the tool for one case.
+/// Default time given to the tool for one case.
 pub const TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -108,12 +113,65 @@ pub fn resolve_tool(cmd: &[String]) -> Result<Vec<String>> {
     Ok(resolved)
 }
 
+/// Runs the tool on every case, `jobs` cases at a time, and calls `report`
+/// on each result in the order of `cases`.
+pub fn run_cases(
+    cmd: &[String],
+    cases: &[Case],
+    layout: &Layout,
+    timeout: Duration,
+    jobs: usize,
+    mut report: impl FnMut(&CaseResult) -> Result<()>,
+) -> Result<Vec<CaseResult>> {
+    let next = AtomicUsize::new(0);
+    let (sender, receiver) = mpsc::channel();
+    thread::scope(|scope| {
+        for _ in 0..jobs.max(1) {
+            let sender = sender.clone();
+            let next = &next;
+            scope.spawn(move || {
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(case) = cases.get(index) else {
+                        break;
+                    };
+                    // The receiver is gone when another case failed.
+                    if sender
+                        .send((index, run_case(cmd, case, layout, timeout)))
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            });
+        }
+        drop(sender);
+
+        // Results arrive in any order, they are reported in the dataset's.
+        let mut pending = BTreeMap::new();
+        let mut results = Vec::with_capacity(cases.len());
+        for (index, result) in receiver {
+            pending.insert(index, result?);
+            while let Some(result) = pending.remove(&results.len()) {
+                report(&result)?;
+                results.push(result);
+            }
+        }
+        Ok(results)
+    })
+}
+
 /// Runs the tool on one case.
-pub fn run_case(cmd: &[String], case: &Case, layout: &Layout) -> Result<CaseResult> {
+pub fn run_case(
+    cmd: &[String],
+    case: &Case,
+    layout: &Layout,
+    timeout: Duration,
+) -> Result<CaseResult> {
     let old = layout.case_dir(&case.id, Version::Old);
     let new = layout.case_dir(&case.id, Version::New);
     let (outcome, elapsed) = if old.is_dir() && new.is_dir() {
-        run_tool(cmd, &old, &new, &case.desc.method, TIMEOUT)?
+        run_tool(cmd, &old, &new, &case.desc.method, timeout)?
     } else {
         (Outcome::NotBuilt, Duration::ZERO)
     };
@@ -140,6 +198,7 @@ pub fn run_tool(
         .arg(old)
         .arg(new)
         .arg(method)
+        .env("EQBENCH_TIMEOUT", timeout.as_secs().to_string())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -356,6 +415,10 @@ mod tests {
         assert_eq!(
             sh(r#"[ "$0 $1 $2" = "old new f" ] && echo neq"#, second),
             Outcome::Predicted(Kind::Neq)
+        );
+        assert_eq!(
+            sh(r#"[ "$EQBENCH_TIMEOUT" = 5 ] && echo eq"#, second),
+            Outcome::Predicted(Kind::Eq)
         );
         assert_eq!(sh("exit 3", second), Outcome::Crashed(Some(3)));
         assert_eq!(sh("echo yes", second), Outcome::Invalid("yes".into()));
