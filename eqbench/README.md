@@ -12,7 +12,7 @@ The 24 whole-program pairs (no `J-Desc.json`) are left out.
 | `details <id>` | Show the metadata of a case and the diff between `oldV.java` and `newV.java` |
 | `build` | Compile every case to bytecode (`javac`), then to JSON (`jvm2json`) in `target/eqbench` |
 | `clean` | Remove `target/eqbench` |
-| `analyse <cmd…>` | Run `<cmd…> <old-dir> <new-dir>` on every case, the tool must print `eq`, `neq` or `unknown`; report accuracy, F1 (mean of `eq` and `neq`) and timings |
+| `analyse <cmd…>` | Run `<cmd…> <old-dir> <new-dir> <method>` on every case, the tool must print `eq`, `neq` or `unknown`; report accuracy, F1 (mean of `eq` and `neq`) and timings |
 
 ## Example
 

@@ -80,7 +80,7 @@ merged `change(old, new)` program, hence last.
 - **`unknown`**: most tools can answer it (`UNKNOWN`, `MAYBE_EQ`, depth limit...).
   The adapter prints `unknown`, which `analyse` counts as no prediction.
 - **Method under comparison**: the tools need it, either by name, as `snippet`,
-  or through a miter. It is the `method` of `J-Desc.json`, not passed to the tool yet.
+  or through a miter. `analyse` passes it as third argument (`method` of `J-Desc.json`).
 - **Miter equality**: NaN, `-0.0`, exceptions, arrays and objects must be compared
   the same way for every tool.
 - **JDK**: the JPF-based tools need Java 8 (`jdk8` in nixpkgs).

@@ -1,10 +1,11 @@
 //! Runs an analysis tool on every case and compares its predictions with the
 //! ground truth.
 //!
-//! The tool is called as `<cmd…> <old-dir> <new-dir>`, the two directories
-//! holding the JSON (jvm2json) of every class of the two versions of a case.
-//! It must print `eq`, `neq` or `unknown` on the first line of its standard
-//! output.
+//! The tool is called as `<cmd…> <old-dir> <new-dir> <method>`, the two
+//! directories holding the JSON (jvm2json) of every class of the two versions
+//! of a case, and `<method>` naming the method to compare (`method name` of
+//! `J-Desc.json`). It must print `eq`, `neq` or `unknown` on the first line
+//! of its standard output.
 
 use std::io::Read;
 use std::path::Path;
@@ -67,7 +68,7 @@ pub fn run_case(cmd: &[String], case: &Case, layout: &Layout) -> Result<CaseResu
     let old = layout.decompiled(&case.id, Version::Old);
     let new = layout.decompiled(&case.id, Version::New);
     let (outcome, elapsed) = if old.is_dir() && new.is_dir() {
-        run_tool(cmd, &old, &new, TIMEOUT)?
+        run_tool(cmd, &old, &new, &case.desc.method, TIMEOUT)?
     } else {
         (Outcome::NotBuilt, Duration::ZERO)
     };
@@ -78,12 +79,13 @@ pub fn run_case(cmd: &[String], case: &Case, layout: &Layout) -> Result<CaseResu
     })
 }
 
-/// Runs `cmd old new`, killing it after `timeout`.
+/// Runs `cmd old new method`, killing it after `timeout`.
 /// Fails only when the tool cannot be started at all.
 pub fn run_tool(
     cmd: &[String],
     old: &Path,
     new: &Path,
+    method: &str,
     timeout: Duration,
 ) -> Result<(Outcome, Duration)> {
     let (program, args) = cmd.split_first().context("no command given")?;
@@ -92,6 +94,7 @@ pub fn run_tool(
         .args(args)
         .arg(old)
         .arg(new)
+        .arg(method)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -284,7 +287,7 @@ mod tests {
 
     fn sh(script: &str, timeout: Duration) -> Outcome {
         let cmd = ["sh".to_string(), "-c".to_string(), script.to_string()];
-        run_tool(&cmd, Path::new("old"), Path::new("new"), timeout)
+        run_tool(&cmd, Path::new("old"), Path::new("new"), "f", timeout)
             .unwrap()
             .0
     }
@@ -306,7 +309,7 @@ mod tests {
         let second = Duration::from_secs(5);
         // With `sh -c`, the first extra argument is `$0`.
         assert_eq!(
-            sh(r#"[ "$0 $1" = "old new" ] && echo neq"#, second),
+            sh(r#"[ "$0 $1 $2" = "old new f" ] && echo neq"#, second),
             Outcome::Predicted(Kind::Neq)
         );
         assert_eq!(sh("exit 3", second), Outcome::Crashed(Some(3)));
@@ -386,6 +389,6 @@ mod tests {
     #[test]
     fn fails_when_the_tool_does_not_exist() {
         let cmd = ["./does-not-exist".to_string()];
-        assert!(run_tool(&cmd, Path::new("a"), Path::new("b"), TIMEOUT).is_err());
+        assert!(run_tool(&cmd, Path::new("a"), Path::new("b"), "f", TIMEOUT).is_err());
     }
 }

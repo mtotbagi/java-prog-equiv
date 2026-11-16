@@ -50,9 +50,10 @@ enum Command {
     Clean,
     /// Run an analysis tool on every case and score its predictions (accuracy, F1, time)
     ///
-    /// The tool is called as `<cmd…> <old-dir> <new-dir>`, the directories
-    /// holding the JSON of every class of both versions, and must print `eq`,
-    /// `neq` or `unknown` on the first line of its output.
+    /// The tool is called as `<cmd…> <old-dir> <new-dir> <method>`, the
+    /// directories holding the JSON of every class of both versions and
+    /// `<method>` the method to compare, and must print `eq`, `neq` or
+    /// `unknown` on the first line of its output.
     Analyse {
         /// The tool and its arguments
         #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
