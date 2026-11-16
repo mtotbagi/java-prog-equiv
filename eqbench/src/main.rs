@@ -48,7 +48,7 @@ enum Command {
     Build,
     /// Remove everything `build` produced
     Clean,
-    /// Run an analysis tool on every case and count its correct predictions
+    /// Run an analysis tool on every case and score its predictions (accuracy, F1, time)
     ///
     /// The tool is called as `<cmd…> <old-dir> <new-dir>`, the directories
     /// holding the JSON of every class of both versions, and must print `eq`
@@ -170,30 +170,52 @@ fn analyse(dataset: &Dataset, cmd: &[String]) -> Result<()> {
     outln!(
         "{}",
         style.bold(&format!(
-            "correct predictions: {}/{} ({:.1}%)",
+            "accuracy  {}/{} ({:.1}%)",
             summary.correct,
             summary.total,
             summary.accuracy()
         ))
     );
+    outln!(
+        "{}",
+        style.bold(&format!(
+            "f1        {:.3} (mean of eq and neq)",
+            summary.macro_f1()
+        ))
+    );
+    for kind in [Kind::Eq, Kind::Neq] {
+        let score = summary.class(kind);
+        outln!(
+            "          {:3}  precision {:5}  recall {:5}  f1 {:.3}",
+            Outcome::Predicted(kind).label(),
+            format_ratio(score.precision()),
+            format_ratio(score.recall()),
+            score.f1()
+        );
+    }
     let slowest = summary
         .slowest
         .as_ref()
         .map(|(id, t)| format!(", max {} ({id})", format_duration(*t)))
         .unwrap_or_default();
     outln!(
-        "time: total {}, mean {}{slowest}",
+        "time      total {}, mean {}{slowest}",
         format_duration(summary.total_time),
         format_duration(summary.mean_time()),
     );
     outln!(
-        "errors: {} timeouts, {} crashes, {} invalid outputs, {} not built",
+        "errors    {} timeouts, {} crashes, {} invalid outputs, {} not built",
         summary.timeouts,
         summary.crashes,
         summary.invalid,
         summary.not_built
     );
     Ok(())
+}
+
+/// A score in [0, 1] with 3 decimals, `-` when undefined.
+fn format_ratio(ratio: Option<f64>) -> String {
+    ratio.map_or_else(|| "-".to_string(), |r| format!("{r:.3}"))
 }
 
 fn format_duration(d: Duration) -> String {
