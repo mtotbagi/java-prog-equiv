@@ -124,6 +124,10 @@ fn are_equiv(class_old: Class, class_new: Class, method: &Method) -> Option<bool
             if r1 == *r2 {
                 continue;
             }
+            // If any of the traces are unfinished, we don't use them as evidence
+            if matches!(r1, ExeResult::DidNotFinish) || matches!(r2, ExeResult::DidNotFinish) {
+                continue;
+            }
             let s = Solver::new();
             for c in &p1 {
                 s.assert(c);
