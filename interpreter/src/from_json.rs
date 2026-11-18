@@ -95,12 +95,12 @@ impl FromJson for StackValue {
             }
             "float" => {
                 let val = f32::from_json(&json["value"]);
-                Self::Float(val, Float::from_f32(0.0))
+                Self::Float(val, Float::from_f32(val))
             }
             "ref" => todo!(),
             "double" => {
                 let val = f64::from_json(&json["value"]);
-                Self::Double(val, Float::from_f64(0.0))
+                Self::Double(val, Float::from_f64(val))
             }
             "long" => {
                 let val = i64::from_json(&json["value"]);
