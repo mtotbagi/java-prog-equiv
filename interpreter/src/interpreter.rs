@@ -187,16 +187,17 @@ impl Interpreter {
                                 let val = cur_frame.stack.pop().unwrap();
                                 let abs = util::abs(&val);
                                 cur_frame.stack.push(abs);
-                            },
+                            }
                             "sqrt" => {
-                                let StackValue::Double(val, sym) = cur_frame.stack.pop().unwrap() else {
+                                let StackValue::Double(val, sym) = cur_frame.stack.pop().unwrap()
+                                else {
                                     panic!()
                                 };
                                 let sqrt = val.sqrt();
                                 let sym_sqrt = sym.sqrt();
                                 cur_frame.stack.push(StackValue::Double(sqrt, sym_sqrt));
                             }
-                            _ => todo!()
+                            _ => todo!(),
                         }
                     } else {
                         todo!(
