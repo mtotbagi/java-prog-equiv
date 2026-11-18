@@ -1,6 +1,9 @@
 use std::{env, fs::File, io::BufReader, path::Path};
 
-use eqbench::{case::CaseId, desc::{DESC_FILE, Desc}};
+use eqbench::{
+    case::CaseId,
+    desc::{DESC_FILE, Desc},
+};
 use interpreter::{Class, ConcolicExecutor, ExeResult, FromJson, Method};
 use z3::{Solver, ast::Bool};
 
@@ -15,7 +18,18 @@ fn main() {
     let class_old = class_from_path(&args[1], "oldV");
     let class_new = class_from_path(&args[2], "newV");
 
-    let name = case_method(&args[1]);
+    let desc = case_desc(&args[1]);
+    // `program name` is `<class>.<entry>` when the changed method (`method name`)
+    // is only called through an entry point, e.g. CLEVER's `Sub.main` calling `foo`:
+    // there only the entry point is equivalent, so that is what is compared.
+    let name = match desc.program.split_once('.') {
+        Some((_, entry))
+            if class_old.get_method(entry).is_some() && class_new.get_method(entry).is_some() =>
+        {
+            entry.to_string()
+        }
+        _ => desc.method,
+    };
     if class_new.get_method(&name).is_none() {
         eprintln!("method `{name}` not found in {}", args[2]);
         std::process::exit(1);
@@ -36,13 +50,13 @@ fn main() {
     }
 }
 
-/// Name of the method to compare, read from the `J-Desc.json` of the case.
+/// Description of the case, read from its `J-Desc.json`.
 ///
 /// `version_dir` is a directory given by `eqbench analyse`,
 /// `target/eqbench/decompiled/<bench>-<prog>-<Eq|Neq>/<old|new>`, whose parent
 /// names the case, described by
 /// `eqbench/src_data/benchmarks/<bench>/<prog>/<Eq|Neq>/J-Desc.json`.
-fn case_method(version_dir: &str) -> String {
+fn case_desc(version_dir: &str) -> Desc {
     let fail = |msg: String| -> ! {
         eprintln!("{msg}");
         std::process::exit(2);
@@ -63,7 +77,7 @@ fn case_method(version_dir: &str) -> String {
         .join(id.kind.as_str())
         .join(DESC_FILE);
     match Desc::load(&desc_file) {
-        Ok(desc) => desc.method,
+        Ok(desc) => desc,
         Err(e) => fail(format!("{e:#}")),
     }
 }
