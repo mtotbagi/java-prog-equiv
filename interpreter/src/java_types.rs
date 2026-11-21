@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
+use crate::{z3_float_to_sbv, z3_sbv_to_float};
 use z3::ast::{Dynamic, Float};
+use z3::{Sort, ast::RoundingMode};
 
 use crate::Heap;
 
@@ -15,6 +17,60 @@ pub enum StackValue {
 }
 
 impl StackValue {
+    pub fn cast(self, to: &SimpleType) -> StackValue {
+        let rne = RoundingMode::round_nearest_ties_to_even();
+        match (self, to) {
+            (StackValue::Int(i, bv), SimpleType::Byte) => {
+                StackValue::Int(i as i8 as i32, bv.extract(7, 0).sign_ext(24))
+            }
+            (StackValue::Int(i, bv), SimpleType::Short) => {
+                StackValue::Int(i as i16 as i32, bv.extract(15, 0).sign_ext(16))
+            }
+            (StackValue::Int(i, bv), SimpleType::Char) => {
+                StackValue::Int(i as u16 as i32, bv.extract(15, 0).zero_ext(16))
+            }
+            (StackValue::Int(i, bv), SimpleType::Long) => {
+                StackValue::Long(i as i64, bv.sign_ext(32))
+            }
+            (StackValue::Int(i, bv), SimpleType::Float) => {
+                StackValue::Float(i as f32, z3_sbv_to_float(&bv, &Sort::float32()))
+            }
+            (StackValue::Int(i, bv), SimpleType::Double) => {
+                StackValue::Double(i as f64, z3_sbv_to_float(&bv, &Sort::double()))
+            }
+            (StackValue::Long(l, bv), SimpleType::Int) => {
+                StackValue::Int(l as i32, bv.extract(31, 0))
+            }
+            (StackValue::Long(l, bv), SimpleType::Float) => {
+                StackValue::Float(l as f32, z3_sbv_to_float(&bv, &Sort::float32()))
+            }
+            (StackValue::Long(l, bv), SimpleType::Double) => {
+                StackValue::Double(l as f64, z3_sbv_to_float(&bv, &Sort::double()))
+            }
+            (StackValue::Float(f, sym), SimpleType::Int) => {
+                StackValue::Int(f as i32, z3_float_to_sbv(&sym, 32))
+            }
+            (StackValue::Float(f, sym), SimpleType::Long) => {
+                StackValue::Long(f as i64, z3_float_to_sbv(&sym, 64))
+            }
+            (StackValue::Float(f, sym), SimpleType::Double) => StackValue::Double(
+                f as f64,
+                sym.to_fp_with_rounding_mode(&rne, &Sort::double()),
+            ),
+            (StackValue::Double(d, sym), SimpleType::Int) => {
+                StackValue::Int(d as i32, z3_float_to_sbv(&sym, 32))
+            }
+            (StackValue::Double(d, sym), SimpleType::Long) => {
+                StackValue::Long(d as i64, z3_float_to_sbv(&sym, 64))
+            }
+            (StackValue::Double(d, sym), SimpleType::Float) => StackValue::Float(
+                d as f32,
+                sym.to_fp_with_rounding_mode(&rne, &Sort::float32()),
+            ),
+            (value, to) => panic!("Invalid cast of {:?} to {:?}", value, to),
+        }
+    }
+
     pub fn get_type(&self) -> StackType {
         match self {
             StackValue::Int(_, _) => StackType::Int,

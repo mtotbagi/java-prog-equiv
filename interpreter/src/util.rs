@@ -71,3 +71,45 @@ pub fn abs(val: &StackValue) -> StackValue {
         StackValue::Ref(..) => panic!("Cannot do abs on ref!"),
     }
 }
+
+/// Converts a signed (two's complement) bitvector to a floating point value
+/// of the given sort, rounding to nearest, ties to even (as Java does).
+/// The `z3` crate does not expose `Z3_mk_fpa_to_fp_signed`, so it is called directly.
+pub fn z3_sbv_to_float(bv: &z3::ast::BV, sort: &z3::Sort) -> z3::ast::Float {
+    use z3::ast::Ast;
+    let ctx = bv.get_ctx();
+    let rm = z3::ast::RoundingMode::round_nearest_ties_to_even();
+    unsafe {
+        let ast = z3_sys::Z3_mk_fpa_to_fp_signed(
+            ctx.get_z3_context(),
+            rm.get_z3_ast(),
+            bv.get_z3_ast(),
+            sort.get_z3_sort(),
+        )
+        .unwrap();
+        z3::ast::Float::wrap(ctx, ast)
+    }
+}
+
+/// Java's float/double -> int/long conversion: NaN becomes 0, values are
+/// rounded towards zero, and out of range values saturate to MIN/MAX.
+pub fn z3_float_to_sbv(f: &z3::ast::Float, size: u32) -> z3::ast::BV {
+    use z3::ast::{Ast, BV, Float, RoundingMode};
+    let is_double = f.get_sort().float_exponent_size() == Some(11);
+    // -2^(size-1) and 2^(size-1) are exactly representable in both float and double
+    let bound = 2f64.powi(size as i32 - 1);
+    let (lo, hi) = if is_double {
+        (Float::from_f64(-bound), Float::from_f64(bound))
+    } else {
+        (
+            Float::from_f32(-bound as f32),
+            Float::from_f32(bound as f32),
+        )
+    };
+    let min = BV::from_i64(i64::MIN >> (64 - size), size);
+    let max = BV::from_i64(i64::MAX >> (64 - size), size);
+    let converted = f.to_sbv_with_rounding_mode(&RoundingMode::round_towards_zero(), size);
+
+    let saturated = f.ge(&hi).ite(&max, &f.le(&lo).ite(&min, &converted));
+    f.is_nan().ite(&BV::from_i64(0, size), &saturated)
+}
