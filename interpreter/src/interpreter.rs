@@ -606,6 +606,11 @@ impl Interpreter {
                     cur_frame.stack.push(to_dup);
                 }
             }
+            Instruction::Cast { from, to } => {
+                let value = cur_frame.stack.pop().unwrap();
+                assert!(*from == value.get_type());
+                cur_frame.stack.push(value.cast(to));
+            }
             Instruction::BitOpr { op } => {
                 let rhs = cur_frame.stack.pop().unwrap();
                 let lhs = cur_frame.stack.pop().unwrap();

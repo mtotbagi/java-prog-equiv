@@ -332,8 +332,10 @@ impl FromJson for Instruction {
             "negate" => Self::Neg {
                 ty: StackType::from_json(&json["type"]),
             },
-            // As best as I can determine, cast doesn't actually do anything
-            "cast" => Self::NoOp,
+            "cast" => Self::Cast {
+                from: StackType::from_json(&json["from"]),
+                to: SimpleType::from_json(&json["to"]),
+            },
             "comparefloating" => Self::CompareFloat {
                 on_nan: i32::from_json(&json["onnan"]),
                 double: json["type"] == Value::String("double".to_string()),
