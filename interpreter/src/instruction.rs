@@ -91,6 +91,11 @@ pub enum Instruction {
     BitOpr {
         op: BitOp,
     },
+    /// Primitive conversion (i2l, i2d, l2i, d2f, i2s, ...)
+    Cast {
+        from: StackType,
+        to: SimpleType,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
