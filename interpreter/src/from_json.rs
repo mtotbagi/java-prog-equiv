@@ -171,7 +171,7 @@ impl FromJson for SimpleType {
                 _ => todo!(),
             }
         }
-        dbg!(json);
+        // dbg!(json);
         let s = if json.is_string() {
             json.as_str().unwrap()
         } else {
@@ -211,7 +211,7 @@ impl FromJson for Option<SimpleType> {
                 _ => todo!(),
             }
         }
-        eprintln!("return type json: {}", json);
+        // eprintln!("return type json: {}", json);
         let s = if json.is_string() {
             json.as_str().unwrap()
         } else if json["base"].is_string() {
@@ -238,7 +238,7 @@ impl FromJson for Option<SimpleType> {
 impl FromJson for Option<StackType> {
     fn from_json(json: &Value) -> Self {
         let Value::String(s) = &json else {
-            eprintln!("{}", json);
+            // eprintln!("{}", json);
             if json.is_null() {
                 return None;
             } else {
@@ -441,7 +441,7 @@ impl FromJson for Cond {
 impl FromJson for MethodId {
     fn from_json(json: &Value) -> Self {
         let name = json["name"].as_str().unwrap().to_string();
-        eprintln!("parsing fn: {name}");
+        // eprintln!("parsing fn: {name}");
 
         let params: Box<_> = if json["params"].is_null() {
             json["args"]
