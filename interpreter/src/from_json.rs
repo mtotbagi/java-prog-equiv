@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde_json::Value;
 use z3::ast::Float;
 
@@ -5,6 +7,7 @@ use crate::{
     Access, BitOp, Cond, Constant, Instruction, Op, SimpleRef, StackType, StackValue,
     java_class::{Class, Method, MethodId},
     java_types::SimpleType,
+    z3_false,
 };
 
 pub trait FromJson {
@@ -497,10 +500,58 @@ impl FromJson for Class {
             .as_array()
             .unwrap()
             .iter()
-            // Skip the <clinit> method as I have no idea how push would work with a class
-            .filter(|m| m["name"] != "<clinit>")
             .map(Method::from_json)
+            .map(|m| dbg!(m))
             .collect();
-        Class { name, methods }
+        let fields_iter = json["fields"].as_array().unwrap().iter();
+        let non_static_fields: Box<_> = fields_iter
+            .clone()
+            .filter(|v| {
+                !v["access"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&Value::String("static".to_string()))
+            })
+            .map(|v| {
+                (
+                    v["name"].as_str().unwrap().to_string(),
+                    SimpleType::from_json(&v["type"]),
+                )
+            })
+            .collect();
+
+        let mut static_fields = HashMap::new();
+        fields_iter
+            .filter(|v| {
+                v["access"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&Value::String("static".to_string()))
+            })
+            .map(|v| {
+                (
+                    v["name"].as_str().unwrap().to_string(),
+                    SimpleType::from_json(&v["type"]),
+                )
+            })
+            .for_each(|(name, ty)| {
+                let default_val = match ty {
+                    SimpleType::Int => StackValue::Int(0, z3::ast::BV::from_i64(0, 32)),
+                    SimpleType::Float => StackValue::Float(0.0, Float::from_f32(0.0)),
+                    SimpleType::Long => StackValue::Long(0, z3::ast::BV::from_i64(0, 64)),
+                    SimpleType::Double => StackValue::Double(0.0, Float::from_f64(0.0)),
+                    SimpleType::SimpleRef(_) => {
+                        StackValue::Ref(None, z3_false(), z3::ast::BV::from_i64(0, 32))
+                    }
+                    _ => panic!(),
+                };
+                static_fields.insert(name, default_val);
+            });
+        Class {
+            name,
+            methods,
+            non_static_fields,
+            static_fields,
+        }
     }
 }
