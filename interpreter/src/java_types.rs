@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use crate::{z3_float_to_sbv, z3_sbv_to_float};
-use z3::ast::{Dynamic, Float};
+use crate::{z3_false, z3_float_to_sbv, z3_sbv_to_float};
+use z3::ast::{BV, Dynamic, Float};
 use z3::{Sort, ast::RoundingMode};
 
 use crate::Heap;
@@ -137,7 +137,7 @@ impl StackValue {
                 HeapValue::Short(*i as i16, bv.extract(15, 0))
             }
             (StackValue::Int(i, bv), SimpleType::Boolean) => {
-                HeapValue::Boolean(*i != 0, bv.extract(1, 0))
+                HeapValue::Boolean(*i != 0, bv.extract(0, 0))
             }
             (StackValue::Float(f, ast), SimpleType::Float) => HeapValue::Float(*f, ast.clone()),
             (StackValue::Double(f, ast), SimpleType::Double) => HeapValue::Double(*f, ast.clone()),
@@ -231,6 +231,9 @@ impl HeapValue {
             HeapValue::Ref(r, sym_is_null, sym_bv) => {
                 StackValue::Ref(*r, sym_is_null.clone(), sym_bv.clone())
             }
+            HeapValue::Long(l, bv) => StackValue::Long(*l, bv.clone()),
+            HeapValue::Double(f, ast) => StackValue::Double(*f, ast.clone()),
+            HeapValue::Boolean(b, bv) => StackValue::Int(*b as i32, bv.zero_ext(31)),
             _ => panic!("Can't convert to StackValue"),
         }
     }
