@@ -268,6 +268,20 @@ impl HeapValue {
             HeapValue::Double(_, ast) => vec![Dynamic::from_ast(ast)],
         }
     }
+
+    pub fn default_val(ty: &SimpleType) -> Self {
+        match ty {
+            SimpleType::Int => HeapValue::Int(0, BV::from_i64(0, 32)),
+            SimpleType::Long => HeapValue::Long(0, BV::from_i64(0, 64)),
+            SimpleType::Float => HeapValue::Float(0.0, Float::from_f32(0.0)),
+            SimpleType::Double => HeapValue::Double(0.0, Float::from_f64(0.0)),
+            SimpleType::Byte => HeapValue::Byte(0, BV::from_i64(0, 8)),
+            SimpleType::Char => HeapValue::Char(0, BV::from_i64(0, 16)),
+            SimpleType::Short => HeapValue::Short(0, BV::from_i64(0, 16)),
+            SimpleType::Boolean => HeapValue::Boolean(false, BV::from_i64(0, 1)),
+            SimpleType::SimpleRef(..) => HeapValue::Ref(None, z3_false(), BV::from_i64(0, 32)),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

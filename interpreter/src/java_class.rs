@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::{
     StackValue,
     instruction::Instruction,
@@ -11,7 +9,7 @@ pub struct Class {
     pub name: String,
     pub methods: Box<[Method]>,
     pub non_static_fields: Box<[(String, SimpleType)]>,
-    pub static_fields: HashMap<String, StackValue>,
+    pub static_fields: Box<[(String, SimpleType)]>,
 }
 
 impl Class {

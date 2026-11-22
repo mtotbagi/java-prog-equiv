@@ -25,7 +25,8 @@ impl Interpreter {
             method: method.id.clone(),
             idx: 0,
         };
-        let mut state = State::new(pc.clone(), input.0, input.1);
+        let (args, heap) = input;
+        let mut state = State::new(pc.clone(), args, heap, &self.class.static_fields);
         let mut path = vec![];
         let mut states = vec![state.clone()];
         for _ in 0..iter {

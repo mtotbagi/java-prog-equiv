@@ -1,6 +1,12 @@
+use std::collections::HashMap;
+
+use z3::ast::Float;
+
 use crate::{
+    SimpleType,
     java_class::MethodId,
     java_types::{HeapValue, StackType, StackValue},
+    z3_false,
 };
 
 pub enum Either {
@@ -23,13 +29,34 @@ pub enum ExeResult {
 pub struct State {
     pub heap: Heap,
     pub frames: Vec<Frame>,
+    pub statics: HashMap<String, StackValue>,
 }
 
 impl State {
-    pub fn new(program_counter: ProgramCounter, input: Vec<StackValue>, heap: Heap) -> Self {
+    pub fn new(
+        program_counter: ProgramCounter,
+        input: Vec<StackValue>,
+        heap: Heap,
+        static_fields: &[(String, SimpleType)],
+    ) -> Self {
+        let mut statics = HashMap::new();
+        static_fields.iter().for_each(|(name, ty)| {
+            let default_val = match ty {
+                SimpleType::Int => StackValue::Int(0, z3::ast::BV::from_i64(0, 32)),
+                SimpleType::Float => StackValue::Float(0.0, Float::from_f32(0.0)),
+                SimpleType::Long => StackValue::Long(0, z3::ast::BV::from_i64(0, 64)),
+                SimpleType::Double => StackValue::Double(0.0, Float::from_f64(0.0)),
+                SimpleType::SimpleRef(_) => {
+                    StackValue::Ref(None, z3_false(), z3::ast::BV::from_i64(0, 32))
+                }
+                _ => panic!(),
+            };
+            statics.insert(name.clone(), default_val);
+        });
         Self {
             heap,
             frames: vec![Frame::new(program_counter, input)],
+            statics,
         }
     }
 
