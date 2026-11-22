@@ -658,6 +658,9 @@ impl Interpreter {
                     (StackValue::Long(lhs, lhs_sym), StackValue::Long(rhs, rhs_sym)) => {
                         StackValue::Long(op.op_long(lhs, rhs), op.op_z3_bv(&lhs_sym, &rhs_sym))
                     }
+                    (StackValue::Long(lhs, lhs_sym), StackValue::Int(rhs, rhs_sym)) => {
+                        StackValue::Long(op.op_long_int(lhs, rhs), op.op_z3_bv(&lhs_sym, &rhs_sym))
+                    }
                     _ => panic!("Invalid types"),
                 };
                 cur_frame.stack.push(res);
