@@ -12,8 +12,11 @@
 //! ```text
 //! staging/<old|new>/benchmarks/<bench>/<prog>/<Eq|Neq>/<oldV|newV>.java
 //! classes/<old|new>/benchmarks/<bench>/<prog>/<Eq|Neq>/*.class
-//! decompiled/<case-id>/<old|new>/*.json
+//! cases/<case-id>/<old|new>/{<oldV|newV>.java,*.json}
 //! ```
+//!
+//! `cases` is what the analysis tools get: the fixed source and the JSON of
+//! every class of each version.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -46,10 +49,11 @@ impl Layout {
         self.root.join("classes").join(version.as_str())
     }
 
-    /// Directory holding the JSON of every class of one version of a case.
-    pub fn decompiled(&self, id: &CaseId, version: Version) -> PathBuf {
+    /// Directory holding the source and the JSON of every class of one
+    /// version of a case.
+    pub fn case_dir(&self, id: &CaseId, version: Version) -> PathBuf {
         self.root
-            .join("decompiled")
+            .join("cases")
             .join(id.to_string())
             .join(version.as_str())
     }
@@ -236,7 +240,8 @@ struct Job {
     json: PathBuf,
 }
 
-/// Runs `jvm2json` on every compiled class, in parallel.
+/// Fills the case directories: copies the staged sources, then runs
+/// `jvm2json` on every compiled class, in parallel.
 fn decompile(dataset: &Dataset, layout: &Layout, report: &mut Report) -> Result<()> {
     let mut jobs = Vec::new();
     for case in &dataset.cases {
@@ -246,8 +251,18 @@ fn decompile(dataset: &Dataset, layout: &Layout, report: &mut Report) -> Result<
             let Ok(entries) = fs::read_dir(&classes) else {
                 continue;
             };
-            let out = layout.decompiled(&case.id, version);
+            let out = layout.case_dir(&case.id, version);
             fs::create_dir_all(&out).with_context(|| format!("cannot create {}", out.display()))?;
+            let file = case
+                .source(version)
+                .file_name()
+                .context("source without a file name")?;
+            let staged = layout
+                .staging(version)
+                .join(case.id.package_dir())
+                .join(file);
+            fs::copy(&staged, out.join(file))
+                .with_context(|| format!("cannot copy {}", staged.display()))?;
             for entry in entries {
                 let class = entry?.path();
                 if class.extension().is_none_or(|e| e != "class") {

@@ -1,12 +1,12 @@
 use std::fs;
 use std::io::{self, Write};
 use std::process::ExitCode;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 
-use eqbench::analyse::{CaseResult, Outcome, Summary, TIMEOUT, run_case};
+use eqbench::analyse::{Outcome, Summary, TIMEOUT, resolve_tool, run_cases};
 use eqbench::build::Layout;
 use eqbench::case::{Case, Dataset, Kind};
 use eqbench::diff::whole_file_diff;
@@ -48,12 +48,20 @@ enum Command {
     Build,
     /// Remove everything `build` produced
     Clean,
-    /// Run an analysis tool on every case and count its correct predictions
+    /// Run an analysis tool on every case and score its predictions (accuracy, F1, time)
     ///
-    /// The tool is called as `<cmd…> <old-dir> <new-dir>`, the directories
-    /// holding the JSON of every class of both versions, and must print `eq`
-    /// or `neq` on the first line of its output.
+    /// The tool is called as `<cmd…> <old-dir> <new-dir> <method>`, the
+    /// directories holding the source and the JSON of every class of both
+    /// versions and `<method>` the method to compare, and must print `eq`,
+    /// `neq` or `unknown` on the first line of its output. A directory holding
+    /// a `flake.nix`, such as `eqbench/tools/pasda`, is built with nix first.
     Analyse {
+        /// Seconds given to the tool for one case, also passed to it as `EQBENCH_TIMEOUT`
+        #[arg(long, default_value_t = TIMEOUT.as_secs(), value_parser = clap::value_parser!(u64).range(1..))]
+        timeout: u64,
+        /// Number of cases analysed at the same time
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u64).range(1..))]
+        jobs: u64,
         /// The tool and its arguments
         #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
         cmd: Vec<String>,
@@ -89,7 +97,9 @@ fn run(command: Command) -> Result<()> {
         }
         Command::Build => build(&load()?)?,
         Command::Clean => clean()?,
-        Command::Analyse { cmd } => analyse(&load()?, &cmd)?,
+        Command::Analyse { timeout, jobs, cmd } => {
+            analyse(&load()?, &cmd, Duration::from_secs(timeout), jobs as usize)?
+        }
     }
     Ok(())
 }
@@ -129,25 +139,28 @@ fn build(dataset: &Dataset) -> Result<()> {
     Ok(())
 }
 
-fn analyse(dataset: &Dataset, cmd: &[String]) -> Result<()> {
+fn analyse(dataset: &Dataset, cmd: &[String], timeout: Duration, jobs: usize) -> Result<()> {
     let layout = Layout::new(output_dir());
-    if !layout.root.join("decompiled").is_dir() {
+    if !layout.root.join("cases").is_dir() {
         bail!("nothing is built, run `eqbench build` first");
     }
+    let tool = resolve_tool(cmd)?;
     let style = Style::stdout();
     let width = id_width(dataset);
+    let jobs_label = format!("{jobs} job{}", if jobs == 1 { "" } else { "s" });
     eprintln!(
-        "analysing {} cases with `{}` (timeout {}s)",
+        "analysing {} cases with `{}` (timeout {}s, {jobs_label})",
         dataset.cases.len(),
         cmd.join(" "),
-        TIMEOUT.as_secs()
+        timeout.as_secs()
     );
 
-    let mut results: Vec<CaseResult> = Vec::with_capacity(dataset.cases.len());
-    for case in &dataset.cases {
-        let result = run_case(cmd, case, &layout)?;
+    let start = Instant::now();
+    let results = run_cases(&tool, &dataset.cases, &layout, timeout, jobs, |result| {
         let mark = if result.is_correct() {
             style.green("✓")
+        } else if result.outcome == Outcome::Unknown {
+            style.dim("?")
         } else {
             style.red("✗")
         };
@@ -162,38 +175,63 @@ fn analyse(dataset: &Dataset, cmd: &[String]) -> Result<()> {
             line.push_str(&style.dim(&format!("  output: {output:?}")));
         }
         outln!("{line}");
-        results.push(result);
-    }
+        Ok(())
+    })?;
+    let wall = start.elapsed();
 
     let summary = Summary::new(&results);
     outln!();
     outln!(
         "{}",
         style.bold(&format!(
-            "correct predictions: {}/{} ({:.1}%)",
+            "accuracy  {}/{} ({:.1}%)",
             summary.correct,
             summary.total,
             summary.accuracy()
         ))
     );
+    outln!(
+        "{}",
+        style.bold(&format!(
+            "f1        {:.3} (mean of eq and neq)",
+            summary.macro_f1()
+        ))
+    );
+    for kind in [Kind::Eq, Kind::Neq] {
+        let score = summary.class(kind);
+        outln!(
+            "          {:3}  precision {:5}  recall {:5}  f1 {:.3}",
+            Outcome::Predicted(kind).label(),
+            format_ratio(score.precision()),
+            format_ratio(score.recall()),
+            score.f1()
+        );
+    }
+    outln!("unknown   {}/{}", summary.unknown, summary.total);
     let slowest = summary
         .slowest
         .as_ref()
         .map(|(id, t)| format!(", max {} ({id})", format_duration(*t)))
         .unwrap_or_default();
     outln!(
-        "time: total {}, mean {}{slowest}",
+        "time      total {}, mean {}{slowest}, wall {} with {jobs_label}",
         format_duration(summary.total_time),
         format_duration(summary.mean_time()),
+        format_duration(wall),
     );
     outln!(
-        "errors: {} timeouts, {} crashes, {} invalid outputs, {} not built",
+        "errors    {} timeouts, {} crashes, {} invalid outputs, {} not built",
         summary.timeouts,
         summary.crashes,
         summary.invalid,
         summary.not_built
     );
     Ok(())
+}
+
+/// A score in [0, 1] with 3 decimals, `-` when undefined.
+fn format_ratio(ratio: Option<f64>) -> String {
+    ratio.map_or_else(|| "-".to_string(), |r| format!("{r:.3}"))
 }
 
 fn format_duration(d: Duration) -> String {
@@ -218,7 +256,7 @@ fn list(dataset: &Dataset) -> Result<()> {
     let method_width = dataset
         .cases
         .iter()
-        .map(|c| c.desc.method.len())
+        .map(|c| c.desc.entry().len())
         .max()
         .unwrap_or(0)
         .max("METHOD".len());
@@ -236,7 +274,7 @@ fn list(dataset: &Dataset) -> Result<()> {
             "{:width$}  {:4}  {:method_width$}  {:>4}  {:>7}",
             case.id.to_string(),
             case.id.kind,
-            case.desc.method,
+            case.desc.entry(),
             case.desc.loc,
             case.desc.changes.len()
         );
@@ -265,7 +303,15 @@ fn details(dataset: &Dataset, case: &Case) -> Result<()> {
     outln!("{} ({verdict})", style.bold(&case.id.to_string()));
 
     let desc = &case.desc;
-    outln!("method           {}", desc.method);
+    if desc.entry() == desc.method {
+        outln!("method           {}", desc.method);
+    } else {
+        outln!(
+            "method           {} (changed: {})",
+            desc.entry(),
+            desc.method
+        );
+    }
     outln!("LOC              {}", desc.loc);
     outln!("loops            {}", desc.loops);
     outln!("non-linear       {}", desc.non_linear);

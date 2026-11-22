@@ -8,6 +8,15 @@ fn dataset() -> Dataset {
     Dataset::load(&dataset_dir()).expect("the dataset should load")
 }
 
+/// Whether `source` holds `name` followed by an opening parenthesis.
+fn has_method(source: &str, name: &str) -> bool {
+    source.match_indices(name).any(|(i, _)| {
+        let before = source[..i].chars().next_back();
+        !before.is_some_and(|c| c.is_alphanumeric() || c == '_')
+            && source[i + name.len()..].trim_start().starts_with('(')
+    })
+}
+
 #[test]
 fn discovers_every_java_case() {
     let dataset = dataset();
@@ -51,6 +60,15 @@ fn parses_every_description() {
     let dataset = dataset();
     for case in &dataset.cases {
         assert!(!case.desc.method.is_empty(), "{}", case.id);
+        // The compared method exists in both versions.
+        for version in Version::ALL {
+            let source = fs::read_to_string(case.source(version)).unwrap();
+            assert!(
+                has_method(&source, case.desc.entry()),
+                "{} ({version})",
+                case.id
+            );
+        }
         assert!(!case.desc.changes.is_empty(), "{}", case.id);
         // Only non-equivalent cases come with a counter-example.
         if case.desc.counter_example.is_some() {

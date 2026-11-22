@@ -1,5 +1,4 @@
 use core::panic;
-use std::{println};
 
 use z3::{SatResult, Solver, Model};
 
@@ -16,8 +15,9 @@ impl ConcolicExecutor {
         }
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn run(
-        &self, 
+        &self,
         method: &Method, 
         iter: u32,
         max_runs: u32

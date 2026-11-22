@@ -91,6 +91,19 @@ struct RawChange {
 }
 
 impl Desc {
+    /// The method whose two versions are compared.
+    ///
+    /// Usually `method`, but CLEVER and REVE pairs name the program after its
+    /// entry point (`Sub.main`, `is_prime3.client`, `triangular.triangle`):
+    /// `method` is then the changed callee, which may differ or change its
+    /// signature while the entry point stays equivalent.
+    pub fn entry(&self) -> &str {
+        match self.program.rsplit_once('.') {
+            Some((_, entry)) => entry,
+            None => &self.method,
+        }
+    }
+
     pub fn load(path: &Path) -> Result<Self> {
         let text =
             fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
@@ -301,7 +314,22 @@ mod tests {
         assert_eq!(desc.changes.len(), 2);
         assert_eq!(desc.changes[1].kind, ChangeKind::Insert);
         assert_eq!(desc.changes[1].lines, vec![range(4, 4), range(6, 8)]);
+        assert_eq!(desc.entry(), "caldat");
         let ce = desc.counter_example.unwrap();
         assert_eq!(ce[0].to_string(), "int julian = 100");
+    }
+
+    #[test]
+    fn compares_the_entry_point_of_the_program() {
+        let desc = Desc::parse(
+            r##"{
+              "benchmark name": "CLEVER", "program name": "Sub.main", "method name": "foo",
+              "LOC": 8, "# Loops": 0, "# non-linear arithmetics": 0,
+              "changes": [ { "change line": 4, "change type": "Update", "change operation": "Swap" } ]
+            }"##,
+        )
+        .unwrap();
+        assert_eq!(desc.method, "foo");
+        assert_eq!(desc.entry(), "main");
     }
 }
