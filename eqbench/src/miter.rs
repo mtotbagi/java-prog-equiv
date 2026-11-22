@@ -9,7 +9,7 @@
 //!   with a static `eqbenchCall` method calling the compared one (which may
 //!   be private, or an instance method);
 //! - `eqbench.Miter.check(<params>)` asserts that both versions return the
-//!   same value (NaN equal to NaN), or both throw the same exception class;
+//!   same value (NaN equal to NaN), or both throw an exception;
 //! - `eqbench.Miter.main` calls `check` on nondeterministic inputs from
 //!   `org.sosy_lab.sv_benchmarks.Verifier`, as SV-COMP verifiers expect.
 //!
@@ -252,7 +252,7 @@ import org.sosy_lab.sv_benchmarks.Verifier;
 
 /** Calls both versions of the compared method on the same inputs. */
 public class Miter {{
-    /** Fails when the versions return different values or throw differently. */
+    /** Fails when the versions return different values, or one only throws. */
     public static void check({params}) {{
         {ty} oldResult = 0;
         {ty} newResult = 0;
@@ -269,7 +269,9 @@ public class Miter {{
             newError = e;
         }}
         if (oldError != null || newError != null) {{
-            assert oldError != null && newError != null && oldError.getClass() == newError.getClass();
+            // Both must throw. Their classes are not compared: JBMC does not
+            // model the identity of `Class` objects.
+            assert oldError != null && newError != null;
         }} else {{
             assert {same};
         }}

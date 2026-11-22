@@ -131,7 +131,7 @@ merged `change(old, new)` program, hence last.
   on objects, ...), and `analyse` gives its directory in `EQBENCH_MITER`.
   `eqbench.Miter.check(<params>)` calls both versions in neutral packages and
   asserts that they return the same value (NaN equals NaN, `-0.0` equals `0.0`)
-  or throw the same exception class; `main` calls it on `Verifier.nondet*()`
+  or both throw an exception (of any class: JBMC does not model the identity of `Class` objects); `main` calls it on `Verifier.nondet*()`
   inputs, as SV-COMP verifiers expect. Compiled for Java 8.
 - **JDK**: the JPF-based tools need Java 8 (`jdk8` in nixpkgs).
 - **Platform**: Java Ranger's SV-COMP archive ships Z3 for x86-64 only (Rosetta on
