@@ -16,7 +16,7 @@ pub fn get_class_and_method(arg: &str) -> (String, String) {
 
 pub fn read_json(classname: &str) -> Value {
     let path = "target/decompiled/".to_string() + classname + ".json";
-    eprintln!("path {}", path);
+    // eprintln!("path {}", path);
     let file = File::open(path).unwrap();
     let reader = BufReader::new(file);
     serde_json::from_reader(reader).unwrap()
