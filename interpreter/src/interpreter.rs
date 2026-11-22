@@ -191,10 +191,15 @@ impl Interpreter {
                     z3_true(),
                     z3::ast::BV::from_u64(idx as u64, 32),
                 ));
-                state.heap.heap.push(HeapValue::Object {
+                let obj = if *class == self.class.name {
+                    self.class.new_object()
+                } else {
+                    HeapValue::Object {
                     name: class.clone(),
                     fields: HashMap::new(),
-                });
+                    }
+                };
+                state.heap.heap.push(obj);
             }
             Instruction::Invoke {
                 access,
@@ -213,7 +218,10 @@ impl Interpreter {
                     SimpleRef::Array { ty: _ } => todo!(),
                 };
                 if self.class.name != *classname {
-                    if classname == "java/lang/AssertionError" && method_id.name == "<init>" {
+                    if (classname == "java/lang/AssertionError" || classname == "java/lang/Object")
+                        && method_id.name == "<init>"
+                    {
+                        cur_frame.stack.pop();
                     } else if classname == "java/lang/Math" {
                         match method_id.name.as_str() {
                             "abs" => {

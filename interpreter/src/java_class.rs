@@ -16,6 +16,17 @@ impl Class {
     pub fn get_method(&self, name: &str) -> Option<&Method> {
         self.methods.iter().find(|m| m.id.name == name)
     }
+
+    pub fn new_object(&self) -> HeapValue {
+        HeapValue::Object {
+            name: self.name.clone(),
+            fields: self
+                .non_static_fields
+                .iter()
+                .map(|(k, v)| (k.clone(), HeapValue::default_val(v)))
+                .collect(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
