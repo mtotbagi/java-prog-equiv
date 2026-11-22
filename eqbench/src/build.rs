@@ -13,10 +13,12 @@
 //! staging/<old|new>/benchmarks/<bench>/<prog>/<Eq|Neq>/<oldV|newV>.java
 //! classes/<old|new>/benchmarks/<bench>/<prog>/<Eq|Neq>/*.class
 //! cases/<case-id>/<old|new>/{<oldV|newV>.java,*.json}
+//! cases/<case-id>/miter/{src,classes}/   or   cases/<case-id>/no-miter.txt
 //! ```
 //!
 //! `cases` is what the analysis tools get: the fixed source and the JSON of
-//! every class of each version.
+//! every class of each version, and the miter comparing them (see
+//! [`crate::miter`]) or why there is none.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -29,6 +31,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 
 use crate::case::{Case, CaseId, Dataset, Version};
+use crate::miter::{self, NEW_PACKAGE, OLD_PACKAGE};
 
 /// Paths of the build artifacts.
 #[derive(Debug, Clone)]
@@ -57,6 +60,19 @@ impl Layout {
             .join(id.to_string())
             .join(version.as_str())
     }
+
+    /// Directory of the miter of a case, with its sources and classes.
+    pub fn miter_dir(&self, id: &CaseId) -> PathBuf {
+        self.root.join("cases").join(id.to_string()).join("miter")
+    }
+
+    /// Why a case has no miter.
+    pub fn no_miter_file(&self, id: &CaseId) -> PathBuf {
+        self.root
+            .join("cases")
+            .join(id.to_string())
+            .join("no-miter.txt")
+    }
 }
 
 /// Something that went wrong for one case, the build goes on.
@@ -74,6 +90,10 @@ pub struct Report {
     pub compile_failures: Vec<Failure>,
     pub classes: usize,
     pub decompile_failures: Vec<Failure>,
+    pub miters: usize,
+    /// Cases whose method the miter cannot compare.
+    pub no_miter: usize,
+    pub miter_failures: Vec<Failure>,
     pub elapsed: Duration,
 }
 
@@ -91,6 +111,7 @@ pub fn build(dataset: &Dataset, layout: &Layout) -> Result<Report> {
         compile(&staged, &layout.classes(version), version, &mut report)?;
     }
     decompile(dataset, layout, &mut report)?;
+    miters(dataset, layout, &mut report)?;
     report.elapsed = start.elapsed();
     Ok(report)
 }
@@ -282,30 +303,178 @@ fn decompile(dataset: &Dataset, layout: &Layout, report: &mut Report) -> Result<
     }
 
     eprintln!("decompiling {} classes with jvm2json", jobs.len());
+    let failures = in_parallel(&jobs, |job| {
+        jvm2json(job).err().map(|message| Failure {
+            what: job.what.clone(),
+            message,
+        })
+    });
+    report.classes = jobs.len() - failures.len();
+    report.decompile_failures = failures;
+    Ok(())
+}
+
+/// Runs `job` on every item, one thread per core, and returns the failures.
+fn in_parallel<T: Sync>(items: &[T], job: impl Fn(&T) -> Option<Failure> + Sync) -> Vec<Failure> {
     let next = AtomicUsize::new(0);
     let failures = Mutex::new(Vec::new());
     let workers = thread::available_parallelism().map_or(4, |n| n.get());
     thread::scope(|scope| {
         for _ in 0..workers {
             scope.spawn(|| {
-                while let Some(job) = jobs.get(next.fetch_add(1, Ordering::Relaxed)) {
-                    if let Err(message) = jvm2json(job) {
-                        let failure = Failure {
-                            what: job.what.clone(),
-                            message,
-                        };
+                while let Some(item) = items.get(next.fetch_add(1, Ordering::Relaxed)) {
+                    if let Some(failure) = job(item) {
                         failures.lock().expect("poisoned lock").push(failure);
                     }
                 }
             });
         }
     });
-
     let mut failures = failures.into_inner().expect("poisoned lock");
     failures.sort_by(|a, b| a.what.cmp(&b.what));
-    report.classes = jobs.len() - failures.len();
-    report.decompile_failures = failures;
+    failures
+}
+
+/// Writes and compiles the miter of every built case, or the reason why it
+/// has none.
+fn miters(dataset: &Dataset, layout: &Layout, report: &mut Report) -> Result<()> {
+    let mut jobs = Vec::new();
+    for case in &dataset.cases {
+        if !Version::ALL
+            .iter()
+            .all(|v| layout.case_dir(&case.id, *v).is_dir())
+        {
+            continue;
+        }
+        match write_miter(case, layout)? {
+            Ok(dir) => jobs.push((case, dir)),
+            Err(reason) => {
+                let file = layout.no_miter_file(&case.id);
+                fs::write(&file, format!("{reason}\n"))
+                    .with_context(|| format!("cannot write {}", file.display()))?;
+                report.no_miter += 1;
+            }
+        }
+    }
+
+    eprintln!("compiling {} miters", jobs.len());
+    let failures = in_parallel(&jobs, |(case, dir)| {
+        let message = compile_miter(dir).err()?;
+        // Tools see a case without a miter, and why.
+        let _ = fs::remove_dir_all(dir);
+        let _ = fs::write(
+            layout.no_miter_file(&case.id),
+            format!("the miter does not compile:\n{message}\n"),
+        );
+        Some(Failure {
+            what: case.id.to_string(),
+            message,
+        })
+    });
+    report.miters = jobs.len() - failures.len();
+    report.miter_failures = failures;
     Ok(())
+}
+
+/// Writes the sources of the miter of `case`. The inner error is why the case
+/// has no miter.
+fn write_miter(case: &Case, layout: &Layout) -> Result<Result<PathBuf, String>> {
+    let method = case.desc.entry();
+    let mut sources = Vec::new();
+    let mut signatures = Vec::new();
+    for (version, package) in [(Version::Old, OLD_PACKAGE), (Version::New, NEW_PACKAGE)] {
+        let class = case
+            .source(version)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .context("source without a file name")?;
+        let dir = layout.case_dir(&case.id, version);
+        let json_file = dir.join(format!("{class}.json"));
+        let Ok(json) = fs::read_to_string(&json_file) else {
+            return Ok(Err(format!("no {class}.json")));
+        };
+        let json: miter::Class = serde_json::from_str(&json)
+            .with_context(|| format!("invalid {}", json_file.display()))?;
+        let signature = match miter::signature(&json, method) {
+            Ok(signature) => signature,
+            Err(reason) => return Ok(Err(format!("{class}: {reason}"))),
+        };
+        let source = fs::read_to_string(dir.join(format!("{class}.java")))?;
+        let (source, _) = fix_package(&source, package);
+        let Some(source) = miter::add_bridge(&source, class, method, &signature) else {
+            return Ok(Err(format!("no class {class} in its source")));
+        };
+        sources.push((package, class, source));
+        signatures.push(signature);
+    }
+    if signatures[0] != signatures[1] {
+        return Ok(Err(format!("the signature of `{method}` changes")));
+    }
+
+    let dir = layout.miter_dir(&case.id);
+    let src = dir.join("src");
+    let mut files = vec![(
+        "eqbench/Miter.java".to_string(),
+        miter::miter_source(&signatures[0], sources[0].1, sources[1].1),
+    )];
+    files.push((
+        "org/sosy_lab/sv_benchmarks/Verifier.java".to_string(),
+        miter::VERIFIER_SOURCE.to_string(),
+    ));
+    for (package, class, source) in sources {
+        files.push((
+            format!("{}/{class}.java", package.replace('.', "/")),
+            source,
+        ));
+    }
+    for (path, content) in files {
+        let path = src.join(path);
+        fs::create_dir_all(path.parent().context("no parent")?)?;
+        fs::write(&path, content).with_context(|| format!("cannot write {}", path.display()))?;
+    }
+    Ok(Ok(dir))
+}
+
+/// Compiles the miter for Java 8, which the JPF based tools need.
+fn compile_miter(dir: &Path) -> Result<(), String> {
+    let src = dir.join("src");
+    let files = [
+        "eqbench/Miter.java",
+        "org/sosy_lab/sv_benchmarks/Verifier.java",
+        "eqbench/v1",
+        "eqbench/v2",
+    ];
+    let mut command = Command::new("javac");
+    command
+        .args([
+            "--release",
+            "8",
+            "-g",
+            "-nowarn",
+            "-Xlint:-options",
+            "-encoding",
+            "UTF-8",
+            "-d",
+        ])
+        .arg(dir.join("classes"));
+    for file in files {
+        let path = src.join(file);
+        if path.is_dir() {
+            for entry in fs::read_dir(&path).map_err(|e| e.to_string())? {
+                command.arg(entry.map_err(|e| e.to_string())?.path());
+            }
+        } else {
+            command.arg(path);
+        }
+    }
+    let output = command
+        .output()
+        .map_err(|e| format!("cannot run javac: {e}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(first_lines(&String::from_utf8_lossy(&output.stderr), 3))
+    }
 }
 
 fn jvm2json(job: &Job) -> Result<(), String> {

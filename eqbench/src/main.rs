@@ -136,6 +136,12 @@ fn build(dataset: &Dataset) -> Result<()> {
     for failure in &report.decompile_failures {
         eprintln!("failed to decompile {}:\n{}", failure.what, failure.message);
     }
+    for failure in &report.miter_failures {
+        eprintln!(
+            "failed to compile the miter of {}:\n{}",
+            failure.what, failure.message
+        );
+    }
     outln!(
         "compiled {} sources ({} fixed, {} failures)",
         report.sources,
@@ -146,6 +152,12 @@ fn build(dataset: &Dataset) -> Result<()> {
         "decompiled {} classes ({} failures)",
         report.classes,
         report.decompile_failures.len(),
+    );
+    outln!(
+        "generated {} miters ({} cases without one, {} failures)",
+        report.miters,
+        report.no_miter,
+        report.miter_failures.len(),
     );
     outln!("done in {:.1}s", report.elapsed.as_secs_f64());
     outln!("output: {}", layout.root.display());

@@ -8,7 +8,9 @@
 //! `J-Desc.json`, or the entry point of CLEVER and REVE programs). It must
 //! print `eq`, `neq` or `unknown` on the first line of its standard output.
 //! The tool is killed after a timeout, which it can read in seconds from
-//! `EQBENCH_TIMEOUT` to plan its own work, or above a memory limit.
+//! `EQBENCH_TIMEOUT` to plan its own work, or above a memory limit. When the
+//! case has a miter (see [`crate::miter`]), `EQBENCH_MITER` is its directory,
+//! whose `classes` hold `eqbench.Miter`.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -201,8 +203,15 @@ pub fn run_case(
 ) -> Result<CaseResult> {
     let old = layout.case_dir(&case.id, Version::Old);
     let new = layout.case_dir(&case.id, Version::New);
+    let miter = layout.miter_dir(&case.id);
+    let miter = miter.join("classes").is_dir().then_some(miter);
     let (outcome, elapsed, peak) = if old.is_dir() && new.is_dir() {
-        run_tool(cmd, &old, &new, case.desc.entry(), timeout, memory)?
+        let dirs = Dirs {
+            old: &old,
+            new: &new,
+            miter: miter.as_deref(),
+        };
+        run_tool(cmd, dirs, case.desc.entry(), timeout, memory)?
     } else {
         (Outcome::NotBuilt, Duration::ZERO, None)
     };
@@ -214,13 +223,20 @@ pub fn run_case(
     })
 }
 
+/// What a tool is given for one case.
+#[derive(Debug, Clone, Copy)]
+pub struct Dirs<'a> {
+    pub old: &'a Path,
+    pub new: &'a Path,
+    pub miter: Option<&'a Path>,
+}
+
 /// Runs `cmd old new method`, killing it after `timeout` or above the limit
 /// of `memory`. Returns its outcome, time and peak memory in KiB.
 /// Fails only when the tool cannot be started at all.
 pub fn run_tool(
     cmd: &[String],
-    old: &Path,
-    new: &Path,
+    dirs: Dirs,
     method: &str,
     timeout: Duration,
     memory: Option<&Memory>,
@@ -229,10 +245,15 @@ pub fn run_tool(
     let mut command = Command::new(program);
     command
         .args(args)
-        .arg(old)
-        .arg(new)
+        .arg(dirs.old)
+        .arg(dirs.new)
         .arg(method)
-        .env("EQBENCH_TIMEOUT", timeout.as_secs().to_string())
+        .env("EQBENCH_TIMEOUT", timeout.as_secs().to_string());
+    match dirs.miter {
+        Some(miter) => command.env("EQBENCH_MITER", miter),
+        None => command.env_remove("EQBENCH_MITER"),
+    };
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -444,9 +465,17 @@ impl Summary {
 mod tests {
     use super::*;
 
+    fn dirs<'a>(old: &'a str, new: &'a str) -> Dirs<'a> {
+        Dirs {
+            old: Path::new(old),
+            new: Path::new(new),
+            miter: None,
+        }
+    }
+
     fn sh(script: &str, timeout: Duration) -> Outcome {
         let cmd = ["sh".to_string(), "-c".to_string(), script.to_string()];
-        run_tool(&cmd, Path::new("old"), Path::new("new"), "f", timeout, None)
+        run_tool(&cmd, dirs("old", "new"), "f", timeout, None)
             .unwrap()
             .0
     }
@@ -566,14 +595,7 @@ mod tests {
             let memory = Memory::new(limit);
             thread::scope(|scope| {
                 scope.spawn(|| memory.run());
-                let run = run_tool(
-                    &cmd,
-                    Path::new("a"),
-                    Path::new("b"),
-                    "f",
-                    TIMEOUT,
-                    Some(&memory),
-                );
+                let run = run_tool(&cmd, dirs("a", "b"), "f", TIMEOUT, Some(&memory));
                 memory.stop();
                 run.unwrap()
             })
@@ -589,6 +611,6 @@ mod tests {
     #[test]
     fn fails_when_the_tool_does_not_exist() {
         let cmd = ["./does-not-exist".to_string()];
-        assert!(run_tool(&cmd, Path::new("a"), Path::new("b"), "f", TIMEOUT, None).is_err());
+        assert!(run_tool(&cmd, dirs("a", "b"), "f", TIMEOUT, None).is_err());
     }
 }

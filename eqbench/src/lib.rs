@@ -4,6 +4,7 @@ pub mod case;
 pub mod desc;
 pub mod diff;
 pub mod memory;
+pub mod miter;
 pub mod results;
 pub mod term;
 

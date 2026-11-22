@@ -10,7 +10,7 @@ The 24 whole-program pairs (no `J-Desc.json`) are left out.
 |---|---|
 | `list` | List every case |
 | `details <id>` | Show the metadata of a case and the diff between `oldV.java` and `newV.java` |
-| `build` | Compile every case to bytecode (`javac`), then to JSON (`jvm2json`); `target/eqbench/cases/<id>/<old\|new>` holds the source and the JSON of each version |
+| `build` | Compile every case to bytecode (`javac`), then to JSON (`jvm2json`); `target/eqbench/cases/<id>/<old\|new>` holds the source and the JSON of each version, and `cases/<id>/miter` a program comparing them (`eqbench.Miter`, see `src/miter.rs`) when the compared method has primitive parameters and result |
 | `clean` | Remove `target/eqbench` |
 | `analyse [--timeout S] [--memory MIB] [--jobs N] [--output FILE [--resume]] <cmd…>` | Run `<cmd…> <old-dir> <new-dir> <method>` on every case (10 s each, no memory limit, one at a time by default), the tool must print `eq`, `neq` or `unknown`; report accuracy, F1 (mean of `eq` and `neq`), timings and peak memory, and write one JSON line per case to `FILE` (`--resume` keeps the cases it already holds) |
 
