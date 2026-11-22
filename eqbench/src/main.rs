@@ -1,5 +1,6 @@
 use std::fs;
 use std::io::{self, Write};
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
@@ -10,6 +11,7 @@ use eqbench::analyse::{Outcome, Summary, TIMEOUT, resolve_tool, run_cases};
 use eqbench::build::Layout;
 use eqbench::case::{Case, Dataset, Kind};
 use eqbench::diff::whole_file_diff;
+use eqbench::results::{Record, Run, Writer};
 use eqbench::term::Style;
 use eqbench::{dataset_dir, output_dir};
 
@@ -55,17 +57,23 @@ enum Command {
     /// versions and `<method>` the method to compare, and must print `eq`,
     /// `neq` or `unknown` on the first line of its output. A directory holding
     /// a `flake.nix`, such as `eqbench/tools/pasda`, is built with nix first.
-    Analyse {
-        /// Seconds given to the tool for one case, also passed to it as `EQBENCH_TIMEOUT`
-        #[arg(long, default_value_t = TIMEOUT.as_secs(), value_parser = clap::value_parser!(u64).range(1..))]
-        timeout: u64,
-        /// Number of cases analysed at the same time
-        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u64).range(1..))]
-        jobs: u64,
-        /// The tool and its arguments
-        #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
-        cmd: Vec<String>,
-    },
+    Analyse(AnalyseArgs),
+}
+
+#[derive(clap::Args)]
+struct AnalyseArgs {
+    /// Seconds given to the tool for one case, also passed to it as `EQBENCH_TIMEOUT`
+    #[arg(long, default_value_t = TIMEOUT.as_secs(), value_parser = clap::value_parser!(u64).range(1..))]
+    timeout: u64,
+    /// Number of cases analysed at the same time
+    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u64).range(1..))]
+    jobs: u64,
+    /// Write the result of every case to this file, as JSON lines
+    #[arg(long, value_name = "FILE")]
+    output: Option<PathBuf>,
+    /// The tool and its arguments
+    #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+    cmd: Vec<String>,
 }
 
 fn main() -> ExitCode {
@@ -97,9 +105,7 @@ fn run(command: Command) -> Result<()> {
         }
         Command::Build => build(&load()?)?,
         Command::Clean => clean()?,
-        Command::Analyse { timeout, jobs, cmd } => {
-            analyse(&load()?, &cmd, Duration::from_secs(timeout), jobs as usize)?
-        }
+        Command::Analyse(args) => analyse(&load()?, &args)?,
     }
     Ok(())
 }
@@ -139,12 +145,23 @@ fn build(dataset: &Dataset) -> Result<()> {
     Ok(())
 }
 
-fn analyse(dataset: &Dataset, cmd: &[String], timeout: Duration, jobs: usize) -> Result<()> {
+fn analyse(dataset: &Dataset, args: &AnalyseArgs) -> Result<()> {
+    let (cmd, timeout, jobs) = (
+        &args.cmd,
+        Duration::from_secs(args.timeout),
+        args.jobs as usize,
+    );
     let layout = Layout::new(output_dir());
     if !layout.root.join("cases").is_dir() {
         bail!("nothing is built, run `eqbench build` first");
     }
     let tool = resolve_tool(cmd)?;
+    let run = Run {
+        tool: cmd.join(" "),
+        timeout,
+        jobs,
+    };
+    let mut writer = args.output.as_deref().map(Writer::create).transpose()?;
     let style = Style::stdout();
     let width = id_width(dataset);
     let jobs_label = format!("{jobs} job{}", if jobs == 1 { "" } else { "s" });
@@ -175,6 +192,9 @@ fn analyse(dataset: &Dataset, cmd: &[String], timeout: Duration, jobs: usize) ->
             line.push_str(&style.dim(&format!("  output: {output:?}")));
         }
         outln!("{line}");
+        if let Some(writer) = writer.as_mut() {
+            writer.write(&Record::new(result, &run))?;
+        }
         Ok(())
     })?;
     let wall = start.elapsed();

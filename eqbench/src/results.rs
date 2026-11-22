@@ -1,0 +1,144 @@
+//! Results of `eqbench analyse` as JSON lines: one record per case, written
+//! as soon as the case is analysed, so that long runs can be plotted or
+//! resumed.
+
+use std::fs::{self, File};
+use std::io::Write;
+use std::path::Path;
+use std::time::Duration;
+
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+
+use crate::analyse::{CaseResult, Outcome};
+use crate::case::Kind;
+
+/// Settings of a run, shared by all its records.
+#[derive(Debug, Clone)]
+pub struct Run {
+    /// The analysis command, as given to `analyse`.
+    pub tool: String,
+    pub timeout: Duration,
+    pub jobs: usize,
+}
+
+/// One line of a results file.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Record {
+    /// Case id, `<bench>-<prog>-<Eq|Neq>`.
+    pub id: String,
+    /// `eq` or `neq`.
+    pub expected: String,
+    /// `eq`, `neq`, `unknown`, `invalid`, `crash`, `timeout` or `not built`.
+    pub outcome: String,
+    /// First line of an invalid output, exit code of a crash.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// Wall time of the tool on the case.
+    pub seconds: f64,
+    pub tool: String,
+    /// Timeout of the run, in seconds.
+    pub timeout: u64,
+    /// Number of cases analysed at the same time.
+    pub jobs: usize,
+}
+
+impl Record {
+    pub fn new(result: &CaseResult, run: &Run) -> Self {
+        let (outcome, detail) = match &result.outcome {
+            Outcome::Predicted(Kind::Eq) => ("eq", None),
+            Outcome::Predicted(Kind::Neq) => ("neq", None),
+            Outcome::Unknown => ("unknown", None),
+            Outcome::Invalid(output) => ("invalid", Some(output.clone())),
+            Outcome::Crashed(code) => ("crash", code.map(|c| c.to_string())),
+            Outcome::Timeout => ("timeout", None),
+            Outcome::NotBuilt => ("not built", None),
+        };
+        Record {
+            id: result.id.to_string(),
+            expected: Outcome::Predicted(result.id.kind).label(),
+            outcome: outcome.to_string(),
+            detail,
+            seconds: result.elapsed.as_secs_f64(),
+            tool: run.tool.clone(),
+            timeout: run.timeout.as_secs(),
+            jobs: run.jobs,
+        }
+    }
+}
+
+/// A results file being written, line by line.
+pub struct Writer {
+    file: File,
+}
+
+impl Writer {
+    pub fn create(path: &Path) -> Result<Self> {
+        if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+            fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
+        }
+        let file =
+            File::create(path).with_context(|| format!("cannot create {}", path.display()))?;
+        Ok(Writer { file })
+    }
+
+    /// Appends `record`, written at once so that a killed run loses nothing
+    /// but the case it was on.
+    pub fn write(&mut self, record: &Record) -> Result<()> {
+        let mut line = serde_json::to_string(record)?;
+        line.push('\n');
+        self.file
+            .write_all(line.as_bytes())
+            .context("cannot write the results")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run() -> Run {
+        Run {
+            tool: "./my-tool --fast".to_string(),
+            timeout: Duration::from_secs(10),
+            jobs: 6,
+        }
+    }
+
+    fn record(outcome: Outcome) -> Record {
+        let result = CaseResult {
+            id: "caldat-caldat-Neq".parse().unwrap(),
+            outcome,
+            elapsed: Duration::from_millis(1500),
+        };
+        Record::new(&result, &run())
+    }
+
+    #[test]
+    fn records_a_result() {
+        let r = record(Outcome::Predicted(Kind::Eq));
+        assert_eq!(r.id, "caldat-caldat-Neq");
+        assert_eq!(r.expected, "neq");
+        assert_eq!(r.outcome, "eq");
+        assert_eq!(r.detail, None);
+        assert_eq!(r.seconds, 1.5);
+        assert_eq!(
+            (r.tool.as_str(), r.timeout, r.jobs),
+            ("./my-tool --fast", 10, 6)
+        );
+        assert_eq!(
+            record(Outcome::Crashed(Some(3))).detail.as_deref(),
+            Some("3")
+        );
+        assert_eq!(record(Outcome::Invalid("maybe".into())).outcome, "invalid");
+    }
+
+    #[test]
+    fn writes_one_json_object_per_line() {
+        let r = record(Outcome::Timeout);
+        let line = serde_json::to_string(&r).unwrap();
+        assert!(!line.contains('\n'));
+        assert!(!line.contains("detail"));
+        assert_eq!(serde_json::from_str::<Record>(&line).unwrap(), r);
+    }
+}
