@@ -148,6 +148,48 @@ impl StackValue {
             _ => panic!("Cannot convert {:?} to {:?}", self, ty),
         }
     }
+
+    pub fn min(&self, other: &Self) -> Self {
+        assert!(self.get_type() == other.get_type());
+        match (self, other) {
+            (StackValue::Int(lhs, sym_lhs), StackValue::Int(rhs, sym_rhs)) => StackValue::Int(
+                (*lhs).min(*rhs),
+                sym_lhs.bvslt(sym_rhs).ite(sym_lhs, sym_rhs),
+            ),
+            (StackValue::Float(lhs, sym_lhs), StackValue::Float(rhs, sym_rhs)) => {
+                StackValue::Float((*lhs).min(*rhs), sym_lhs.lt(sym_rhs).ite(sym_lhs, sym_rhs))
+            }
+            (StackValue::Long(lhs, sym_lhs), StackValue::Long(rhs, sym_rhs)) => StackValue::Long(
+                (*lhs).min(*rhs),
+                sym_lhs.bvslt(sym_rhs).ite(sym_lhs, sym_rhs),
+            ),
+            (StackValue::Double(lhs, sym_lhs), StackValue::Double(rhs, sym_rhs)) => {
+                StackValue::Double((*lhs).min(*rhs), sym_lhs.lt(sym_rhs).ite(sym_lhs, sym_rhs))
+            }
+            _ => panic!("Cannot perform min on these types!"),
+        }
+    }
+
+    pub fn max(&self, other: &Self) -> Self {
+        assert!(self.get_type() == other.get_type());
+        match (self, other) {
+            (StackValue::Int(lhs, sym_lhs), StackValue::Int(rhs, sym_rhs)) => StackValue::Int(
+                (*lhs).max(*rhs),
+                sym_lhs.bvsgt(sym_rhs).ite(sym_lhs, sym_rhs),
+            ),
+            (StackValue::Float(lhs, sym_lhs), StackValue::Float(rhs, sym_rhs)) => {
+                StackValue::Float((*lhs).max(*rhs), sym_lhs.gt(sym_rhs).ite(sym_lhs, sym_rhs))
+            }
+            (StackValue::Long(lhs, sym_lhs), StackValue::Long(rhs, sym_rhs)) => StackValue::Long(
+                (*lhs).max(*rhs),
+                sym_lhs.bvsgt(sym_rhs).ite(sym_lhs, sym_rhs),
+            ),
+            (StackValue::Double(lhs, sym_lhs), StackValue::Double(rhs, sym_rhs)) => {
+                StackValue::Double((*lhs).max(*rhs), sym_lhs.gt(sym_rhs).ite(sym_lhs, sym_rhs))
+            }
+            _ => panic!("Cannot perform min on these types!"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
