@@ -120,7 +120,6 @@ merged `change(old, new)` program, hence last.
   or through a miter. `analyse` passes it as third argument: the `method` of
   `J-Desc.json`, or the entry point named by `program name` for CLEVER and REVE
   (`Sub.main` → `main`).
-- **Miter equality**: NaN, `-0.0`, exceptions, arrays and objects must be compared
-  the same way for every tool.
 - **JDK**: the JPF-based tools need Java 8 (`jdk8` in nixpkgs).
 - **Platform**: the SV-COMP archives and PASDA's Docker image are Linux x86-64.
+
