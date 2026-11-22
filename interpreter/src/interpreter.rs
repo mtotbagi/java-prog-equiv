@@ -124,7 +124,7 @@ impl Interpreter {
             .map(|m| &m.instructions)
             .next()
             .unwrap();
-        dbg!(&bytecode[cur_frame.pc()]);
+        // dbg!(&bytecode[cur_frame.pc()]);
         match &bytecode[cur_frame.pc()] {
             Instruction::Load { ty, index } => cur_frame.load(*ty, *index),
             Instruction::Push { value } => match value {
@@ -246,7 +246,7 @@ impl Interpreter {
                     access,
                     Access::Static | Access::Special | Access::Virtual
                 ));
-                eprintln!("{}", method_id.name);
+                // eprintln!("{}", method_id.name);
                 // If this is not a method of the class, it's one of the special cases
                 // Or it's unhandled and we panic
                 let classname = match simple_ref {
