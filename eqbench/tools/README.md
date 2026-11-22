@@ -8,6 +8,7 @@ root flake stays small.
 ```sh
 just eqbench analyse ./eqbench/tools/pasda               # PASDA
 just eqbench analyse ./eqbench/tools/pasda --tool ARDiff  # ARDiff, DSE
+just eqbench analyse ./eqbench/tools/jbmc
 ```
 
 `analyse` builds the flake of the directory with nix before the first case,
@@ -16,6 +17,7 @@ then runs the only program of its default package with the given arguments.
 | Tool | Status |
 |---|---|
 | [PASDA, ARDiff, DSE](pasda) | Done, tested on macOS (aarch64), not on Linux yet. ARDiff and DSE are the versions fixed by the authors of PASDA, run from the same build with `--tool`. The adapter makes the compared method the first, static `snippet` method of its class and the other members static, as PASDA requires. They answer `unknown` for `void` methods, non-primitive parameters, methods outside `oldV` / `newV` and pairs PASDA's instrumentation cannot handle (e.g. a callee whose signature changes). `--budget` (default: one second below the timeout of `analyse`) and `--depth` (default 10) can be passed too. |
+| [JBMC](jbmc) | Done. CBMC 6.11.0 of nixpkgs rebuilt with JBMC (about 25 min the first time). Checks the miter, `eqbench.Miter.check` on every input, unwinding loops and recursion up to a bound that doubles from 1: `eq` once every unwinding assertion holds, `neq` on a counterexample, `unknown` when the counterexample goes through a method JBMC has no body for (e.g. `Math.sin`, whose result it then picks freely). |
 
 ## Results
 
@@ -120,6 +122,13 @@ merged `change(old, new)` program, hence last.
   or through a miter. `analyse` passes it as third argument: the `method` of
   `J-Desc.json`, or the entry point named by `program name` for CLEVER and REVE
   (`Sub.main` → `main`).
+- **Miter**: `eqbench build` writes one for the 209 pairs whose method has
+  primitive parameters and result (not the 26 `void` methods, raytrace's methods
+  on objects, ...), and `analyse` gives its directory in `EQBENCH_MITER`.
+  `eqbench.Miter.check(<params>)` calls both versions in neutral packages and
+  asserts that they return the same value (NaN equals NaN, `-0.0` equals `0.0`)
+  or throw the same exception class; `main` calls it on `Verifier.nondet*()`
+  inputs, as SV-COMP verifiers expect. Compiled for Java 8.
 - **JDK**: the JPF-based tools need Java 8 (`jdk8` in nixpkgs).
 - **Platform**: the SV-COMP archives and PASDA's Docker image are Linux x86-64.
 

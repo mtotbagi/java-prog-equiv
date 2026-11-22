@@ -73,11 +73,20 @@
           postInstall = "";
           versionCheckProgram = "${placeholder "out"}/bin/jbmc";
         });
+
+        adapter = pkgs.writeShellApplication {
+          name = "jbmc-eqbench";
+          runtimeInputs = [jbmc pkgs.python3];
+          text = ''
+            exec python3 -I ${./adapter.py} --models ${jbmc}/share/java/core-models.jar "$@"
+          '';
+        };
       in {
         packages = {
-          default = jbmc;
+          default = adapter;
           inherit jbmc models;
         };
+        apps.default = flake-utils.lib.mkApp {drv = adapter;};
       }
     );
 }
