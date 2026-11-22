@@ -32,6 +32,7 @@ from matplotlib.colors import LinearSegmentedColormap  # noqa: E402
 from matplotlib.ticker import MaxNLocator  # noqa: E402
 
 # Tools in their fixed categorical slot: a tool keeps its color in every plot.
+# The palette has 8 slots: with more tools, lines go to one panel per tool.
 TOOLS = {
     "prog-equiv": "prog-equiv",
     "pasda": "PASDA",
@@ -41,6 +42,7 @@ TOOLS = {
     "java-ranger": "Java Ranger",
     "jazzer": "Jazzer",
     "imp-s": "IMP-S",
+    "prv": "PRV",
 }
 
 THEMES = {
@@ -148,16 +150,18 @@ def load(path: Path) -> Run:
     return Run(name, TOOLS.get(name, name), lines[0]["timeout"], lines[0]["jobs"], records)
 
 
-def assign_colors(runs: list[Run]) -> dict[str, int]:
-    """Categorical slot of each tool: its fixed one, else the first free one."""
-    slots = {r.name: list(TOOLS).index(r.name) for r in runs if r.name in TOOLS}
+def assign_colors(runs: list[Run]) -> dict[str, int] | None:
+    """Categorical slot of each tool: its fixed one, else the first free one.
+    `None` above 8 tools, the size of the palette."""
+    if len(runs) > 8:
+        return None
+    fixed = {r.name: list(TOOLS).index(r.name) for r in runs if list(TOOLS).index(r.name) < 8} if all(
+        r.name in TOOLS for r in runs) else {}
+    slots = dict(fixed)
     free = (s for s in range(8) if s not in slots.values())
     for run in runs:
         if run.name not in slots:
-            slot = next(free, None)
-            if slot is None:
-                raise SystemExit("more than 8 tools: plot them in two groups")
-            slots[run.name] = slot
+            slots[run.name] = next(free)
     return slots
 
 
@@ -201,7 +205,9 @@ def subtitle(fig, runs: list[Run], theme: dict) -> None:
              color=theme["secondary"], ha="left", va="bottom", transform=fig.transFigure)
 
 
-def answers(runs: list[Run], colors: dict, theme: dict):
+def answers(runs: list[Run], colors: dict | None, theme: dict):
+    if colors is None:
+        return answers_per_tool(runs, theme)
     fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharex=True)
     timeout = runs[0].timeout
     for ax, state, title in ((axes[0], "correct", "Correct answers"), (axes[1], "wrong", "Wrong answers")):
@@ -226,6 +232,38 @@ def answers(runs: list[Run], colors: dict, theme: dict):
         direct_labels(ax, ends, timeout, theme)
     axes[0].set_ylabel("pairs")
     axes[0].legend(loc="upper left")
+    subtitle(fig, runs, theme)
+    fig.tight_layout()
+    return fig
+
+
+def answers_per_tool(runs: list[Run], theme: dict):
+    """Small multiples: one panel per tool, correct and wrong answers."""
+    columns = 3
+    rows = math.ceil(len(runs) / columns)
+    fig, axes = plt.subplots(rows, columns, figsize=(10, 2.6 * rows), sharex=True, sharey=True, squeeze=False)
+    timeout = runs[0].timeout
+    top = max(max(run.count("correct"), run.count("wrong")) for run in runs)
+    for ax, run in zip(axes.flat, runs):
+        ends = []
+        for state, color in (("correct", "#0ca30c"), ("wrong", "#d03b3b")):
+            times = sorted(r.seconds for r in run.records if r.state == state)
+            ax.step([0.01, *[max(t, 0.01) for t in times], timeout], [0, *range(1, len(times) + 1), len(times)],
+                    where="post", color=color, linewidth=2, label=state)
+            ends.append((len(times), state, color))
+        ax.set_title(run.label)
+        direct_labels(ax, ends, timeout, theme)
+    for ax in axes.flat[len(runs):]:
+        ax.set_visible(False)
+    axes[0][0].set_xscale("log")
+    axes[0][0].set_xlim(0.1, timeout)
+    axes[0][0].set_ylim(0, max(1, top) * 1.08)
+    axes[0][0].yaxis.set_major_locator(MaxNLocator(integer=True))
+    for ax in axes[-1]:
+        ax.set_xlabel("time limit (s)")
+    for row in axes:
+        row[0].set_ylabel("pairs")
+    axes[0][0].legend(loc="upper left")
     subtitle(fig, runs, theme)
     fig.tight_layout()
     return fig
@@ -275,23 +313,42 @@ def quality(runs: list[Run], theme: dict):
     return fig
 
 
-def memory(runs: list[Run], colors: dict, theme: dict):
-    fig, ax = plt.subplots(figsize=(7, 4))
-    for run in runs:
-        peaks = sorted(r.memory_mib for r in run.records if r.memory_mib)
-        if not peaks:
-            continue
-        ys = [100 * i / len(run.records) for i in range(1, len(peaks) + 1)]
-        ax.step(peaks, ys, where="post", color=theme["series"][colors[run.name]], linewidth=2, label=run.label)
-    ax.set_xscale("log")
-    ax.set_ylim(0, 100)
-    ax.set_xlabel("peak resident memory (MiB)")
-    ax.set_ylabel("pairs (%)")
-    ax.set_title("Pairs analysed within a memory size")
-    ax.legend(loc="upper left")
+def memory(runs: list[Run], colors: dict | None, theme: dict):
+    if colors is None:
+        columns = 3
+        rows = math.ceil(len(runs) / columns)
+        fig, axes = plt.subplots(rows, columns, figsize=(10, 2.6 * rows), sharex=True, sharey=True, squeeze=False)
+        for ax, run in zip(axes.flat, runs):
+            memory_line(ax, run, theme["series"][0])
+            ax.set_title(run.label)
+        for ax in axes.flat[len(runs):]:
+            ax.set_visible(False)
+        for ax in axes[-1]:
+            ax.set_xlabel("peak memory (MiB)")
+        for row in axes:
+            row[0].set_ylabel("pairs (%)")
+    else:
+        fig, ax = plt.subplots(figsize=(7, 4))
+        for run in runs:
+            memory_line(ax, run, theme["series"][colors[run.name]], label=run.label)
+        ax.set_xlabel("peak resident memory (MiB)")
+        ax.set_ylabel("pairs (%)")
+        ax.set_title("Pairs analysed within a memory size")
+        ax.legend(loc="upper left")
+        axes = [[ax]]
+    axes[0][0].set_xscale("log")
+    axes[0][0].set_ylim(0, 100)
     subtitle(fig, runs, theme)
     fig.tight_layout()
     return fig
+
+
+def memory_line(ax, run: Run, color: str, label: str | None = None) -> None:
+    """Share of the pairs whose peak memory is below each size."""
+    peaks = sorted(r.memory_mib for r in run.records if r.memory_mib)
+    if peaks:
+        ys = [100 * i / len(run.records) for i in range(1, len(peaks) + 1)]
+        ax.step(peaks, ys, where="post", color=color, linewidth=2, label=label)
 
 
 def benchmarks(runs: list[Run], theme: dict):
