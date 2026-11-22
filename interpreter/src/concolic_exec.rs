@@ -7,7 +7,6 @@ use z3::{
 
 use crate::*;
 
-/// A concolic run: the concrete input, the path condition and the result.
 pub type Run = ((Vec<StackValue>, Heap), Vec<z3::ast::Bool>, ExeResult);
 
 pub struct ConcolicExecutor {
@@ -61,22 +60,6 @@ impl ConcolicExecutor {
     }
 }
 
-/// Builds the first concrete input (all zeros / false / NUL) for `method`.
-///
-/// The symbolic side of argument `i` is a Z3 constant *named* `arg{i}` (not a fresh
-/// one). Two executors for two versions of the same method therefore talk about the
-/// SAME input variables, so their path conditions can be combined in one solver query
-/// (this is what `prog-equiv` needs).
-///
-/// Narrow types are modelled like the JVM does: the variable has the narrow width and
-/// is widened to 32 bits (sign extension for byte/short, zero extension for char and
-/// boolean), so that e.g. a `byte` can never be 200.
-///
-/// For an instance method, local 0 is `this`: a non-null object of `class_name` that is
-/// the first (and only) object on the heap. Its fields are empty, so a method that
-/// reads an instance field still fails inside the interpreter.
-///
-/// Returns an error for parameter types that are not supported yet (references).
 pub fn initial_input(class_name: &str, method: &Method) -> Result<(Vec<StackValue>, Heap), String> {
     let mut args = Vec::new();
     let mut heap = Vec::new();
@@ -144,9 +127,6 @@ fn next_input(model: &Model, old_input: &(Vec<StackValue>, Heap)) -> (Vec<StackV
 }
 
 /// Value of a bitvector in the model, as unsigned bits.
-///
-/// Note: `as_u64`, not `as_i64`. Z3 numerals are unsigned, so a negative `long`
-/// does not fit in an `i64` numeral and `as_i64` would return `None`.
 fn eval_bits(model: &Model, bv: &BV) -> Option<u64> {
     model.eval(bv, true)?.as_u64()
 }
