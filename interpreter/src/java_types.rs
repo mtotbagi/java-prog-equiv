@@ -386,7 +386,7 @@ pub enum Constant {
     Heap(HeapValue),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum SimpleRef {
     Class { name: String },
     Array { ty: ArrayType },
@@ -433,7 +433,7 @@ impl ArrayType {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum SimpleType {
     Int,
     Long,
