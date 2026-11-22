@@ -232,6 +232,33 @@ impl Interpreter {
                             }
                             _ => todo!(),
                         }
+                    } else if classname == "java/lang/Double" {
+                        match method_id.name.as_str() {
+                            "doubleToRawLongBits" => {
+                                let StackValue::Double(val, sym) = cur_frame.stack.pop().unwrap()
+                                else {
+                                    panic!("doubleToRawLongBits expects a double")
+                                };
+                                cur_frame
+                                    .stack
+                                    .push(StackValue::Long(val.to_bits() as i64, sym.to_ieee_bv()));
+                            }
+                            "longBitsToDouble" => {
+                                let StackValue::Long(val, bv) = cur_frame.stack.pop().unwrap()
+                                else {
+                                    panic!("longBitsToDouble expects a long")
+                                };
+                                cur_frame.stack.push(StackValue::Double(
+                                    f64::from_bits(val as u64),
+                                    util::z3_ieee_bv_to_float(&bv, &z3::Sort::double()),
+                                ));
+                            }
+                            _ => todo!(
+                                "Handling {} method on class {} not yet implemented",
+                                method_id.name,
+                                classname
+                            ),
+                        }
                     } else {
                         todo!(
                             "Handling {} method on class {} not yet implemented",
