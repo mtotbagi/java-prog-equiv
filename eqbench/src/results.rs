@@ -7,7 +7,7 @@ use std::io::Write;
 use std::path::Path;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::analyse::{CaseResult, Outcome};
@@ -65,6 +65,44 @@ impl Record {
             jobs: run.jobs,
         }
     }
+
+    /// The result the record was made from.
+    pub fn to_result(&self) -> Result<CaseResult> {
+        let outcome = match self.outcome.as_str() {
+            "eq" => Outcome::Predicted(Kind::Eq),
+            "neq" => Outcome::Predicted(Kind::Neq),
+            "unknown" => Outcome::Unknown,
+            "invalid" => Outcome::Invalid(self.detail.clone().unwrap_or_default()),
+            "crash" => Outcome::Crashed(self.detail.as_deref().map(str::parse).transpose()?),
+            "timeout" => Outcome::Timeout,
+            "not built" => Outcome::NotBuilt,
+            other => bail!("unknown outcome `{other}` for {}", self.id),
+        };
+        Ok(CaseResult {
+            id: self.id.parse()?,
+            outcome,
+            elapsed: Duration::from_secs_f64(self.seconds),
+        })
+    }
+}
+
+/// Reads a results file. A last line that does not parse is dropped: it was
+/// being written when the run was killed.
+pub fn load(path: &Path) -> Result<Vec<Record>> {
+    let text =
+        fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
+    let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    let mut records = Vec::with_capacity(lines.len());
+    for (i, line) in lines.iter().enumerate() {
+        match serde_json::from_str(line) {
+            Ok(record) => records.push(record),
+            Err(_) if i + 1 == lines.len() => {
+                eprintln!("{}: dropping the truncated last line", path.display())
+            }
+            Err(e) => bail!("{}:{}: {e}", path.display(), i + 1),
+        }
+    }
+    Ok(records)
 }
 
 /// A results file being written, line by line.
@@ -131,6 +169,38 @@ mod tests {
             Some("3")
         );
         assert_eq!(record(Outcome::Invalid("maybe".into())).outcome, "invalid");
+    }
+
+    #[test]
+    fn reads_back_every_outcome() {
+        for outcome in [
+            Outcome::Predicted(Kind::Eq),
+            Outcome::Predicted(Kind::Neq),
+            Outcome::Unknown,
+            Outcome::Invalid("maybe".into()),
+            Outcome::Crashed(Some(3)),
+            Outcome::Crashed(None),
+            Outcome::Timeout,
+            Outcome::NotBuilt,
+        ] {
+            let result = record(outcome.clone()).to_result().unwrap();
+            assert_eq!(result.outcome, outcome);
+            assert_eq!(result.elapsed, Duration::from_millis(1500));
+        }
+    }
+
+    #[test]
+    fn drops_a_truncated_last_line() {
+        let path =
+            std::env::temp_dir().join(format!("eqbench-results-{}.jsonl", std::process::id()));
+        let mut writer = Writer::create(&path).unwrap();
+        writer.write(&record(Outcome::Unknown)).unwrap();
+        writer.write(&record(Outcome::Timeout)).unwrap();
+        writer.file.write_all(b"{\"id\":\"caldat-cal").unwrap();
+        let records = load(&path).unwrap();
+        fs::remove_file(&path).unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[1].outcome, "timeout");
     }
 
     #[test]

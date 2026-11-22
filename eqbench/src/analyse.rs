@@ -118,7 +118,7 @@ pub fn resolve_tool(cmd: &[String]) -> Result<Vec<String>> {
 /// on each result in the order of `cases`.
 pub fn run_cases(
     cmd: &[String],
-    cases: &[Case],
+    cases: &[&Case],
     layout: &Layout,
     timeout: Duration,
     jobs: usize,

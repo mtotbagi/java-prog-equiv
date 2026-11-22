@@ -1,17 +1,18 @@
+use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 
-use eqbench::analyse::{Outcome, Summary, TIMEOUT, resolve_tool, run_cases};
+use eqbench::analyse::{CaseResult, Outcome, Summary, TIMEOUT, resolve_tool, run_cases};
 use eqbench::build::Layout;
-use eqbench::case::{Case, Dataset, Kind};
+use eqbench::case::{Case, CaseId, Dataset, Kind};
 use eqbench::diff::whole_file_diff;
-use eqbench::results::{Record, Run, Writer};
+use eqbench::results::{self, Record, Run, Writer};
 use eqbench::term::Style;
 use eqbench::{dataset_dir, output_dir};
 
@@ -71,6 +72,9 @@ struct AnalyseArgs {
     /// Write the result of every case to this file, as JSON lines
     #[arg(long, value_name = "FILE")]
     output: Option<PathBuf>,
+    /// Keep the results already in the output file and analyse the other cases only
+    #[arg(long, requires = "output")]
+    resume: bool,
     /// The tool and its arguments
     #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
     cmd: Vec<String>,
@@ -161,19 +165,30 @@ fn analyse(dataset: &Dataset, args: &AnalyseArgs) -> Result<()> {
         timeout,
         jobs,
     };
-    let mut writer = args.output.as_deref().map(Writer::create).transpose()?;
+    let (mut writer, mut done) = match &args.output {
+        Some(path) => {
+            let (writer, done) = open_results(path, args.resume, &run, dataset)?;
+            (Some(writer), done)
+        }
+        None => (None, HashMap::new()),
+    };
+    let todo: Vec<&Case> = dataset
+        .cases
+        .iter()
+        .filter(|c| !done.contains_key(&c.id))
+        .collect();
     let style = Style::stdout();
     let width = id_width(dataset);
     let jobs_label = format!("{jobs} job{}", if jobs == 1 { "" } else { "s" });
     eprintln!(
         "analysing {} cases with `{}` (timeout {}s, {jobs_label})",
-        dataset.cases.len(),
+        todo.len(),
         cmd.join(" "),
         timeout.as_secs()
     );
 
     let start = Instant::now();
-    let results = run_cases(&tool, &dataset.cases, &layout, timeout, jobs, |result| {
+    let new = run_cases(&tool, &todo, &layout, timeout, jobs, |result| {
         let mark = if result.is_correct() {
             style.green("✓")
         } else if result.outcome == Outcome::Unknown {
@@ -198,6 +213,12 @@ fn analyse(dataset: &Dataset, args: &AnalyseArgs) -> Result<()> {
         Ok(())
     })?;
     let wall = start.elapsed();
+    done.extend(new.into_iter().map(|r| (r.id.clone(), r)));
+    let results: Vec<CaseResult> = dataset
+        .cases
+        .iter()
+        .filter_map(|c| done.remove(&c.id))
+        .collect();
 
     let summary = Summary::new(&results);
     outln!();
@@ -247,6 +268,52 @@ fn analyse(dataset: &Dataset, args: &AnalyseArgs) -> Result<()> {
         summary.not_built
     );
     Ok(())
+}
+
+/// Creates the results file of `run`. With `resume`, the records it already
+/// holds are kept, and their results returned so that their cases are not
+/// analysed again.
+fn open_results(
+    path: &Path,
+    resume: bool,
+    run: &Run,
+    dataset: &Dataset,
+) -> Result<(Writer, HashMap<CaseId, CaseResult>)> {
+    let mut kept = Vec::new();
+    if resume && path.exists() {
+        for record in results::load(path)? {
+            if record.tool != run.tool || record.timeout != run.timeout.as_secs() {
+                bail!(
+                    "{} holds results of `{}` with a timeout of {}s, not of this run",
+                    path.display(),
+                    record.tool,
+                    record.timeout
+                );
+            }
+            let result = record.to_result()?;
+            if dataset.find(&result.id).is_some() {
+                kept.push((record, result));
+            }
+        }
+    }
+
+    // Rewritten, without the truncated line that a killed run may leave.
+    let mut writer = Writer::create(path)?;
+    let mut done = HashMap::new();
+    for (record, result) in kept {
+        if !done.contains_key(&result.id) {
+            writer.write(&record)?;
+            done.insert(result.id.clone(), result);
+        }
+    }
+    if !done.is_empty() {
+        eprintln!(
+            "resuming: {} cases already in {}",
+            done.len(),
+            path.display()
+        );
+    }
+    Ok((writer, done))
 }
 
 /// A score in [0, 1] with 3 decimals, `-` when undefined.
