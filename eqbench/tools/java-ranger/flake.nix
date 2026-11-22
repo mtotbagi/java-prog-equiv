@@ -29,11 +29,20 @@
           then "x86_64-darwin"
           else system;
         jdk = nixpkgs.legacyPackages.${jdkSystem}.jdk8;
+
+        adapter = pkgs.writeShellApplication {
+          name = "java-ranger-eqbench";
+          runtimeInputs = [jdk pkgs.python3];
+          text = ''
+            exec python3 -I ${./adapter.py} --java-ranger ${javaRanger} "$@"
+          '';
+        };
       in {
         packages = {
-          default = javaRanger;
+          default = adapter;
           java-ranger = javaRanger;
         };
+        apps.default = flake-utils.lib.mkApp {drv = adapter;};
       }
     );
 }

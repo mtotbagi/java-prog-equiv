@@ -9,6 +9,7 @@ root flake stays small.
 just eqbench analyse ./eqbench/tools/pasda               # PASDA
 just eqbench analyse ./eqbench/tools/pasda --tool ARDiff  # ARDiff, DSE
 just eqbench analyse ./eqbench/tools/jbmc
+just eqbench analyse ./eqbench/tools/java-ranger
 ```
 
 `analyse` builds the flake of the directory with nix before the first case,
@@ -18,6 +19,7 @@ then runs the only program of its default package with the given arguments.
 |---|---|
 | [PASDA, ARDiff, DSE](pasda) | Done, tested on macOS (aarch64), not on Linux yet. ARDiff and DSE are the versions fixed by the authors of PASDA, run from the same build with `--tool`. The adapter makes the compared method the first, static `snippet` method of its class and the other members static, as PASDA requires. They answer `unknown` for `void` methods, non-primitive parameters, methods outside `oldV` / `newV` and pairs PASDA's instrumentation cannot handle (e.g. a callee whose signature changes). `--budget` (default: one second below the timeout of `analyse`) and `--depth` (default 10) can be passed too. |
 | [JBMC](jbmc) | Done. CBMC 6.11.0 of nixpkgs rebuilt with JBMC (about 25 min the first time). Checks the miter, `eqbench.Miter.check` on every input, unwinding loops and recursion up to a bound that doubles from 1: `eq` once every unwinding assertion holds, `neq` on a counterexample, `unknown` when the counterexample goes through a method JBMC has no body for (e.g. `Math.sin`, whose result it then picks freely). |
+| [Java Ranger](java-ranger) | Done. The SV-COMP 2027 build, whose Z3 is x86-64 only: Apple Silicon runs it with an x86-64 JDK 8 through Rosetta. Runs `eqbench.Miter.main` with symbolic inputs and its SV-COMP configuration (doubles in [-2^31, 2^31]), the search depth doubling from 16: `neq` on an `AssertionError`, `eq` once every path is explored without reaching the depth limit. |
 
 ## Results
 
@@ -130,5 +132,6 @@ merged `change(old, new)` program, hence last.
   or throw the same exception class; `main` calls it on `Verifier.nondet*()`
   inputs, as SV-COMP verifiers expect. Compiled for Java 8.
 - **JDK**: the JPF-based tools need Java 8 (`jdk8` in nixpkgs).
-- **Platform**: the SV-COMP archives and PASDA's Docker image are Linux x86-64.
+- **Platform**: Java Ranger's SV-COMP archive ships Z3 for x86-64 only (Rosetta on
+  Apple Silicon), Jazzer's launcher is the one released for macOS.
 
