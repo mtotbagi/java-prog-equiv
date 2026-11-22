@@ -284,7 +284,48 @@ impl Interpreter {
                                 let lhs = cur_frame.stack.pop().unwrap();
                                 cur_frame.stack.push(lhs.max(&rhs));
                             }
-                            _ => todo!(),
+                            "floor" | "ceil" | "rint" => {
+                                use z3::ast::RoundingMode;
+                                let StackValue::Double(val, sym) = cur_frame.stack.pop().unwrap()
+                                else {
+                                    panic!("Math.{} expects a double", method_id.name)
+                                };
+                                let (res, rm) = match method_id.name.as_str() {
+                                    "floor" => {
+                                        (val.floor(), RoundingMode::round_towards_negative())
+                                    }
+                                    "ceil" => (val.ceil(), RoundingMode::round_towards_positive()),
+                                    _ => (
+                                        val.round_ties_even(),
+                                        RoundingMode::round_nearest_ties_to_even(),
+                                    ),
+                                };
+                                cur_frame.stack.push(StackValue::Double(
+                                    res,
+                                    sym.round_to_integral_with_rounding_mode(&rm),
+                                ));
+                            }
+                            "getExponent" => {
+                                let val = cur_frame.stack.pop().unwrap();
+                                cur_frame.stack.push(util::math_get_exponent(&val));
+                            }
+                            name => {
+                                let concrete: fn(&[f64]) -> f64 = match name {
+                                    "log" => |a| a[0].ln(),
+                                    "exp" => |a| a[0].exp(),
+                                    "pow" => |a| a[0].powf(a[1]),
+                                    "sin" => |a| a[0].sin(),
+                                    "cos" => |a| a[0].cos(),
+                                    "tan" => |a| a[0].tan(),
+                                    "atan" => |a| a[0].atan(),
+                                    "cosh" => |a| a[0].cosh(),
+                                    "tanh" => |a| a[0].tanh(),
+                                    _ => todo!("java/lang/Math.{name}"),
+                                };
+                                let n = method_id.params.len();
+                                let args = cur_frame.stack.split_off(cur_frame.stack.len() - n);
+                                cur_frame.stack.push(util::math_uf(name, &args, concrete));
+                            }
                         }
                     } else if classname == "java/lang/Double" {
                         match method_id.name.as_str() {
