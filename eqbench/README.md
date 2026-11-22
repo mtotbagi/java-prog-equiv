@@ -26,5 +26,9 @@ f1        0.352 (mean of eq and neq)
           neq  precision -      recall 0.000  f1 0.000
 unknown   0/248
 time      total 11.98 s, mean 48.3 ms, max 83.8 ms (ej_hash-testCollision3-Eq), wall 12.04 s with 1 job
-errors    0 timeouts, 0 crashes, 0 invalid outputs, 0 not built
+errors    0 timeouts, 0 memory outs, 0 crashes, 0 invalid outputs, 0 not built
 ```
+
+`just eqbench-plot` draws the `--output` files of `eqbench/results/` (named
+`<tool>-<timeout>.jsonl`) into `eqbench/results/plots/`: answers within a time
+limit, what each tool answered, peak memory and correct answers per benchmark.

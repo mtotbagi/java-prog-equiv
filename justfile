@@ -15,6 +15,10 @@ run analyser="":
 eqbench *args:
     cargo run -q -p eqbench -- {{args}}
 
+# Plot eqbench results into eqbench/results/plots, e.g. `just eqbench-plot eqbench/results/*-300.jsonl`
+eqbench-plot *files="eqbench/results/*.jsonl":
+    nix {{nix_flags}} run ./eqbench/plots -- --out eqbench/results/plots {{files}}
+
 [macos]
 flake-check:
     nix {{nix_flags}} flake check --all-systems
