@@ -1,14 +1,14 @@
 """eqbench adapter for PASDA (https://github.com/glockyco/PASDA).
 
-    pasda-eqbench [--tool PASDA|ARDiff|DSE] [--budget SECONDS] [--depth N]
+    pasda-eqbench [--tool PASDA|ARDiff|DSE|IMP-S|PRV] [--budget SECONDS] [--depth N]
                   <old-dir> <new-dir> <method>
 
 Makes the method under comparison the `public static snippet` method that
 PASDA expects, runs the tool in a scratch directory and prints `eq`, `neq` or
 `unknown`. The reason of an `unknown` answer is printed on the standard error.
 
-Besides PASDA, its repository ships the versions of ARDiff and DSE that its
-authors fixed; they run from the same JAR.
+Besides PASDA, its repository ships the versions of ARDiff, DSE, IMP-S and
+PRV that its authors fixed or wrote; they run from the same JARs.
 """
 
 import argparse
@@ -28,12 +28,15 @@ PRIMITIVES = {"int", "long", "short", "byte", "char", "boolean", "float", "doubl
 BASE_JAR = "build/libs/ARDiff-base-1.0-SNAPSHOT-all.jar"
 DIFF_JAR = "build/libs/ARDiff-diff-1.0-SNAPSHOT-all.jar"
 VERDICTS = {"EQ": "eq", "NEQ": "neq"}
-# Arguments of the base runner for each tool, and the name its runs are
-# recorded under (PASDA also needs the differencing runner).
+# For each tool: the arguments of the base runner, the tool of the
+# differencing runner when the base one only instruments the pair (the
+# partition-based tools), and the name its runs are recorded under.
 TOOLS = {
-    "PASDA": (["--tool", "P", "--s", "coral"], "PASDA-diff"),
-    "ARDiff": (["--tool", "A", "--s", "coral", "--H", "H123"], "ARDiff-base"),
-    "DSE": (["--tool", "D", "--s", "coral"], "DSE-base"),
+    "PASDA": (["--tool", "P", "--s", "coral"], "PASDA", "PASDA-diff"),
+    "PRV": (["--tool", "S", "--s", "coral"], "SE", "SE-diff"),
+    "ARDiff": (["--tool", "A", "--s", "coral", "--H", "H123"], None, "ARDiff-base"),
+    "DSE": (["--tool", "D", "--s", "coral"], None, "DSE-base"),
+    "IMP-S": (["--tool", "I", "--s", "coral"], None, "Imp-base"),
 }
 
 
@@ -147,7 +150,7 @@ def make_static(source: str, cls: str) -> str:
 
 def run(pasda: Path, tool: str, old: str, new: str, depth: int, deadline: float) -> str:
     """Runs `tool` on the two prepared sources, returns its verdict."""
-    base_args, recorded_as = TOOLS[tool]
+    base_args, diff_tool, recorded_as = TOOLS[tool]
     with tempfile.TemporaryDirectory(prefix="pasda-eqbench-") as tmp:
         impl = Path(tmp) / "implementation"
         # PASDA wants an Eq or NEq directory, it stores it but never reads it.
@@ -161,10 +164,10 @@ def run(pasda: Path, tool: str, old: str, new: str, depth: int, deadline: float)
         output = java(impl, deadline, BASE_JAR,
                       "--path1", f"{pair}/oldV.java", "--path2", f"{pair}/newV.java",
                       *base_args, "--b", str(depth), "--t", str(seconds_left(deadline)))
-        if tool == "PASDA":
-            if not (pair_dir / "instrumented" / "IDiffPASDA-Parameters.txt").is_file():
+        if diff_tool:
+            if not (pair_dir / "instrumented" / f"IDiff{diff_tool}-Parameters.txt").is_file():
                 raise Unknown("the instrumentation failed:\n" + tail(output))
-            output = java(impl, deadline, DIFF_JAR, pair, "PASDA", str(seconds_left(deadline)), str(depth))
+            output = java(impl, deadline, DIFF_JAR, pair, diff_tool, str(seconds_left(deadline)), str(depth))
         verdict = read_verdict(impl / "analysis" / "results" / "sqlite.db", recorded_as)
         if verdict is None:
             raise Unknown(f"{tool} recorded no result:\n" + tail(output))
