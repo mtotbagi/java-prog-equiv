@@ -74,17 +74,36 @@
           versionCheckProgram = "${placeholder "out"}/bin/jbmc";
         });
 
+        # Runs JBMC's counterexamples on the JVM, to confirm them.
+        jdk = pkgs.jdk17;
+        replay = pkgs.stdenvNoCC.mkDerivation {
+          name = "eqbench-replay";
+          src = ./EqbenchReplay.java;
+          dontUnpack = true;
+          nativeBuildInputs = [jdk];
+          buildPhase = ''
+            mkdir classes
+            cp $src EqbenchReplay.java
+            javac --release 8 -Xlint:-options -d classes EqbenchReplay.java
+          '';
+          installPhase = ''
+            mkdir -p $out/share/java
+            jar cf $out/share/java/eqbench-replay.jar -C classes .
+          '';
+        };
+
         adapter = pkgs.writeShellApplication {
           name = "jbmc-eqbench";
-          runtimeInputs = [jbmc pkgs.python3];
+          runtimeInputs = [jbmc jdk pkgs.python3];
           text = ''
-            exec python3 -I ${./adapter.py} --models ${jbmc}/share/java/core-models.jar "$@"
+            exec python3 -I ${./adapter.py} --models ${jbmc}/share/java/core-models.jar \
+              --replay ${replay}/share/java/eqbench-replay.jar "$@"
           '';
         };
       in {
         packages = {
           default = adapter;
-          inherit jbmc models;
+          inherit jbmc models replay;
         };
         apps.default = flake-utils.lib.mkApp {drv = adapter;};
       }
