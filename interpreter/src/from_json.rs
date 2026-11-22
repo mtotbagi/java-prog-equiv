@@ -1,4 +1,3 @@
-
 use serde_json::Value;
 use z3::ast::Float;
 
@@ -518,7 +517,7 @@ impl FromJson for Class {
             })
             .collect();
 
-        let static_fields= fields_iter
+        let static_fields = fields_iter
             .filter(|v| {
                 v["access"]
                     .as_array()
@@ -530,7 +529,8 @@ impl FromJson for Class {
                     v["name"].as_str().unwrap().to_string(),
                     SimpleType::from_json(&v["type"]),
                 )
-            }).collect();
+            })
+            .collect();
         Class {
             name,
             methods,
