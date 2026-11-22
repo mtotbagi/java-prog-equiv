@@ -59,14 +59,61 @@ def main() -> None:
 
     deadline = time.monotonic() + args.budget
     try:
-        old = prepare((args.old / "oldV.java").read_text(), "oldV", args.method)
-        new = prepare((args.new / "newV.java").read_text(), "newV", args.method)
+        old_source = (args.old / "oldV.java").read_text()
+        new_source = (args.new / "newV.java").read_text()
+        changed = changed_callees(old_source, new_source, args.method)
+        if changed:
+            raise Unknown(
+                f"`{args.method}` calls {', '.join(changed)}, changed: the tools of PASDA analyse "
+                "the compared method only and see the calls as the same uninterpreted functions"
+            )
+        old = prepare(old_source, "oldV", args.method)
+        new = prepare(new_source, "newV", args.method)
         verdict = run(args.pasda, args.tool, old, new, args.depth, deadline)
     except Unknown as reason:
         print(f"unknown: {reason}", file=sys.stderr)
         verdict = "UNKNOWN"
     print(VERDICTS.get(verdict, "unknown"))
     print(f"{args.tool}: {verdict}")
+
+
+def changed_callees(old: str, new: str, method: str) -> list[str]:
+    """Methods of the class that `method` calls, directly or not, and whose
+    code differs between the versions (CLEVER's `main` calling a changed `foo`)."""
+    old_methods, new_methods = methods(old, "oldV"), methods(new, "newV")
+    names = old_methods.keys() | new_methods.keys()
+    called, todo = set(), [method]
+    while todo:
+        body = old_methods.get(todo[-1], "") + new_methods.get(todo.pop(), "")
+        for name in names - called - {method}:
+            if re.search(rf"(?<![\w.]){re.escape(name)}\s*\(", body):
+                called.add(name)
+                todo.append(name)
+    return sorted(n for n in called if normalize(old_methods.get(n)) != normalize(new_methods.get(n)))
+
+
+def methods(source: str, cls: str) -> dict[str, str]:
+    """Code of each method of class `cls`, by name (overloads together)."""
+    try:
+        opening, closing = class_body(source, cls)
+    except Unknown:
+        return {}
+    body = source[opening:closing]
+    found: dict[str, str] = {}
+    for m in METHOD.finditer(body):
+        name = m.group(1)
+        if name in ("oldV", "newV") or body.count("{", 0, m.start()) != body.count("}", 0, m.start()):
+            continue  # constructor, or a call in a method body
+        end = matching_brace(body, body.index("{", m.end())) + 1
+        found[name] = found.get(name, "") + body[m.start() : end]
+    return found
+
+
+def normalize(code: str | None) -> str | None:
+    """`code` without layout and with the class name of its version."""
+    if code is None:
+        return None
+    return re.sub(r"\s+", " ", re.sub(r"\b(oldV|newV)\b", "V", code)).strip()
 
 
 def prepare(source: str, cls: str, method: str) -> str:
@@ -126,6 +173,11 @@ def matching_brace(source: str, opening: int) -> int:
             return i
     raise Unknown("unbalanced braces")
 
+
+# A method declaration: modifiers, type, name and `(`.
+METHOD = re.compile(
+    r"^[ \t]*(?:(?:public|private|protected|static|final|synchronized)\s+)*[\w\[\]<>.]+\s+(\w+)\s*\(", re.M
+)
 
 # A method or field declaration: modifiers, type, name, then `(`, `=`, `;` or `,`.
 MEMBER = re.compile(r"^([ \t]*)((?:(?:public|private|protected|final)\s+)*)([\w\[\]<>.]+\s+\w+\s*[(=;,])", re.M)
