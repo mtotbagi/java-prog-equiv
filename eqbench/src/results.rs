@@ -19,6 +19,8 @@ pub struct Run {
     /// The analysis command, as given to `analyse`.
     pub tool: String,
     pub timeout: Duration,
+    /// Memory limit, in MiB.
+    pub memory: Option<u64>,
     pub jobs: usize,
 }
 
@@ -29,16 +31,23 @@ pub struct Record {
     pub id: String,
     /// `eq` or `neq`.
     pub expected: String,
-    /// `eq`, `neq`, `unknown`, `invalid`, `crash`, `timeout` or `not built`.
+    /// `eq`, `neq`, `unknown`, `invalid`, `crash`, `timeout`, `memory out` or
+    /// `not built`.
     pub outcome: String,
     /// First line of an invalid output, exit code of a crash.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
     /// Wall time of the tool on the case.
     pub seconds: f64,
+    /// Peak resident memory of the tool, in MiB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_mib: Option<f64>,
     pub tool: String,
     /// Timeout of the run, in seconds.
     pub timeout: u64,
+    /// Memory limit of the run, in MiB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_limit_mib: Option<u64>,
     /// Number of cases analysed at the same time.
     pub jobs: usize,
 }
@@ -52,6 +61,7 @@ impl Record {
             Outcome::Invalid(output) => ("invalid", Some(output.clone())),
             Outcome::Crashed(code) => ("crash", code.map(|c| c.to_string())),
             Outcome::Timeout => ("timeout", None),
+            Outcome::MemoryOut => ("memory out", None),
             Outcome::NotBuilt => ("not built", None),
         };
         Record {
@@ -60,8 +70,10 @@ impl Record {
             outcome: outcome.to_string(),
             detail,
             seconds: result.elapsed.as_secs_f64(),
+            memory_mib: result.memory.map(|kib| kib as f64 / 1024.0),
             tool: run.tool.clone(),
             timeout: run.timeout.as_secs(),
+            memory_limit_mib: run.memory,
             jobs: run.jobs,
         }
     }
@@ -75,6 +87,7 @@ impl Record {
             "invalid" => Outcome::Invalid(self.detail.clone().unwrap_or_default()),
             "crash" => Outcome::Crashed(self.detail.as_deref().map(str::parse).transpose()?),
             "timeout" => Outcome::Timeout,
+            "memory out" => Outcome::MemoryOut,
             "not built" => Outcome::NotBuilt,
             other => bail!("unknown outcome `{other}` for {}", self.id),
         };
@@ -82,6 +95,7 @@ impl Record {
             id: self.id.parse()?,
             outcome,
             elapsed: Duration::from_secs_f64(self.seconds),
+            memory: self.memory_mib.map(|mib| (mib * 1024.0).round() as u64),
         })
     }
 }
@@ -139,6 +153,7 @@ mod tests {
         Run {
             tool: "./my-tool --fast".to_string(),
             timeout: Duration::from_secs(10),
+            memory: Some(2048),
             jobs: 6,
         }
     }
@@ -148,6 +163,7 @@ mod tests {
             id: "caldat-caldat-Neq".parse().unwrap(),
             outcome,
             elapsed: Duration::from_millis(1500),
+            memory: Some(512 * 1024),
         };
         Record::new(&result, &run())
     }
@@ -181,11 +197,13 @@ mod tests {
             Outcome::Crashed(Some(3)),
             Outcome::Crashed(None),
             Outcome::Timeout,
+            Outcome::MemoryOut,
             Outcome::NotBuilt,
         ] {
             let result = record(outcome.clone()).to_result().unwrap();
             assert_eq!(result.outcome, outcome);
             assert_eq!(result.elapsed, Duration::from_millis(1500));
+            assert_eq!(result.memory, Some(512 * 1024));
         }
     }
 

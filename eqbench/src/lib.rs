@@ -3,6 +3,7 @@ pub mod build;
 pub mod case;
 pub mod desc;
 pub mod diff;
+pub mod memory;
 pub mod results;
 pub mod term;
 

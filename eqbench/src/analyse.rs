@@ -8,7 +8,7 @@
 //! `J-Desc.json`, or the entry point of CLEVER and REVE programs). It must
 //! print `eq`, `neq` or `unknown` on the first line of its standard output.
 //! The tool is killed after a timeout, which it can read in seconds from
-//! `EQBENCH_TIMEOUT` to plan its own work.
+//! `EQBENCH_TIMEOUT` to plan its own work, or above a memory limit.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -24,6 +24,7 @@ use anyhow::{Context, Result, bail};
 
 use crate::build::Layout;
 use crate::case::{Case, CaseId, Kind, Version};
+use crate::memory::Memory;
 
 /// Default time given to the tool for one case.
 pub const TIMEOUT: Duration = Duration::from_secs(10);
@@ -38,6 +39,8 @@ pub enum Outcome {
     /// The tool exited with a failure status (`None` when killed by a signal).
     Crashed(Option<i32>),
     Timeout,
+    /// The tool used more memory than allowed.
+    MemoryOut,
     /// The case was not built, the tool was not run.
     NotBuilt,
 }
@@ -52,6 +55,7 @@ impl Outcome {
             Outcome::Crashed(Some(code)) => format!("exit {code}"),
             Outcome::Crashed(None) => "killed".to_string(),
             Outcome::Timeout => "timeout".to_string(),
+            Outcome::MemoryOut => "memory out".to_string(),
             Outcome::NotBuilt => "not built".to_string(),
         }
     }
@@ -62,6 +66,8 @@ pub struct CaseResult {
     pub id: CaseId,
     pub outcome: Outcome,
     pub elapsed: Duration,
+    /// Peak resident memory of the tool, in KiB.
+    pub memory: Option<u64>,
 }
 
 impl CaseResult {
@@ -114,22 +120,32 @@ pub fn resolve_tool(cmd: &[String]) -> Result<Vec<String>> {
     Ok(resolved)
 }
 
+/// Limits given to the tool on each case.
+#[derive(Debug, Clone, Copy)]
+pub struct Limits {
+    pub timeout: Duration,
+    /// Resident memory, in MiB.
+    pub memory: Option<u64>,
+}
+
 /// Runs the tool on every case, `jobs` cases at a time, and calls `report`
 /// on each result in the order of `cases`.
 pub fn run_cases(
     cmd: &[String],
     cases: &[&Case],
     layout: &Layout,
-    timeout: Duration,
+    limits: Limits,
     jobs: usize,
     mut report: impl FnMut(&CaseResult) -> Result<()>,
 ) -> Result<Vec<CaseResult>> {
     let next = AtomicUsize::new(0);
+    let memory = Memory::new(limits.memory);
     let (sender, receiver) = mpsc::channel();
     thread::scope(|scope| {
+        scope.spawn(|| memory.run());
         for _ in 0..jobs.max(1) {
             let sender = sender.clone();
-            let next = &next;
+            let (next, memory) = (&next, &memory);
             scope.spawn(move || {
                 loop {
                     let index = next.fetch_add(1, Ordering::Relaxed);
@@ -138,7 +154,10 @@ pub fn run_cases(
                     };
                     // The receiver is gone when another case failed.
                     if sender
-                        .send((index, run_case(cmd, case, layout, timeout)))
+                        .send((
+                            index,
+                            run_case(cmd, case, layout, limits.timeout, Some(memory)),
+                        ))
                         .is_err()
                     {
                         break;
@@ -149,17 +168,27 @@ pub fn run_cases(
         drop(sender);
 
         // Results arrive in any order, they are reported in the dataset's.
-        let mut pending = BTreeMap::new();
-        let mut results = Vec::with_capacity(cases.len());
-        for (index, result) in receiver {
-            pending.insert(index, result?);
-            while let Some(result) = pending.remove(&results.len()) {
-                report(&result)?;
-                results.push(result);
-            }
-        }
-        Ok(results)
+        let results = report_in_order(receiver, cases.len(), &mut report);
+        memory.stop();
+        results
     })
+}
+
+fn report_in_order(
+    receiver: mpsc::Receiver<(usize, Result<CaseResult>)>,
+    len: usize,
+    report: &mut impl FnMut(&CaseResult) -> Result<()>,
+) -> Result<Vec<CaseResult>> {
+    let mut pending = BTreeMap::new();
+    let mut results = Vec::with_capacity(len);
+    for (index, result) in receiver {
+        pending.insert(index, result?);
+        while let Some(result) = pending.remove(&results.len()) {
+            report(&result)?;
+            results.push(result);
+        }
+    }
+    Ok(results)
 }
 
 /// Runs the tool on one case.
@@ -168,22 +197,25 @@ pub fn run_case(
     case: &Case,
     layout: &Layout,
     timeout: Duration,
+    memory: Option<&Memory>,
 ) -> Result<CaseResult> {
     let old = layout.case_dir(&case.id, Version::Old);
     let new = layout.case_dir(&case.id, Version::New);
-    let (outcome, elapsed) = if old.is_dir() && new.is_dir() {
-        run_tool(cmd, &old, &new, case.desc.entry(), timeout)?
+    let (outcome, elapsed, peak) = if old.is_dir() && new.is_dir() {
+        run_tool(cmd, &old, &new, case.desc.entry(), timeout, memory)?
     } else {
-        (Outcome::NotBuilt, Duration::ZERO)
+        (Outcome::NotBuilt, Duration::ZERO, None)
     };
     Ok(CaseResult {
         id: case.id.clone(),
         outcome,
         elapsed,
+        memory: peak,
     })
 }
 
-/// Runs `cmd old new method`, killing it after `timeout`.
+/// Runs `cmd old new method`, killing it after `timeout` or above the limit
+/// of `memory`. Returns its outcome, time and peak memory in KiB.
 /// Fails only when the tool cannot be started at all.
 pub fn run_tool(
     cmd: &[String],
@@ -191,7 +223,8 @@ pub fn run_tool(
     new: &Path,
     method: &str,
     timeout: Duration,
-) -> Result<(Outcome, Duration)> {
+    memory: Option<&Memory>,
+) -> Result<(Outcome, Duration, Option<u64>)> {
     let (program, args) = cmd.split_first().context("no command given")?;
     let mut command = Command::new(program);
     command
@@ -221,27 +254,39 @@ pub fn run_tool(
         out
     });
 
+    let group = child.id();
+    if let Some(memory) = memory {
+        memory.watch(group);
+    }
     let status = loop {
         if let Some(status) = child.try_wait()? {
-            break Some(status);
+            break Ok(status);
         }
-        if start.elapsed() >= timeout {
-            kill_group(child.id());
+        let killed = if start.elapsed() >= timeout {
+            Some(Outcome::Timeout)
+        } else if memory.is_some_and(|m| m.exceeded(group)) {
+            Some(Outcome::MemoryOut)
+        } else {
+            None
+        };
+        if let Some(outcome) = killed {
+            kill_group(group);
             let _ = child.kill();
             let _ = child.wait();
-            break None;
+            break Err(outcome);
         }
         thread::sleep(Duration::from_millis(1));
     };
     let elapsed = start.elapsed();
+    let peak = memory.and_then(|m| m.forget(group));
 
     let outcome = match status {
         // The reader is left behind: a leftover process may still hold the pipe.
-        None => Outcome::Timeout,
-        Some(status) if !status.success() => Outcome::Crashed(status.code()),
-        Some(_) => parse_prediction(&reader.join().unwrap_or_default()),
+        Err(outcome) => outcome,
+        Ok(status) if !status.success() => Outcome::Crashed(status.code()),
+        Ok(_) => parse_prediction(&reader.join().unwrap_or_default()),
     };
-    Ok((outcome, elapsed))
+    Ok((outcome, elapsed, peak))
 }
 
 /// Kills the process group led by `pid`.
@@ -310,8 +355,11 @@ pub struct Summary {
     pub neq: ClassScore,
     pub total_time: Duration,
     pub slowest: Option<(CaseId, Duration)>,
+    /// Largest peak memory, in KiB.
+    pub heaviest: Option<(CaseId, u64)>,
     pub unknown: usize,
     pub timeouts: usize,
+    pub memory_outs: usize,
     pub crashes: usize,
     pub invalid: usize,
     pub not_built: usize,
@@ -335,12 +383,18 @@ impl Summary {
             if summary.slowest.as_ref().is_none_or(|(_, t)| r.elapsed > *t) {
                 summary.slowest = Some((r.id.clone(), r.elapsed));
             }
+            if let Some(peak) = r.memory
+                && summary.heaviest.as_ref().is_none_or(|(_, m)| peak > *m)
+            {
+                summary.heaviest = Some((r.id.clone(), peak));
+            }
             match r.outcome {
                 Outcome::Predicted(_) => {}
                 Outcome::Unknown => summary.unknown += 1,
                 Outcome::Invalid(_) => summary.invalid += 1,
                 Outcome::Crashed(_) => summary.crashes += 1,
                 Outcome::Timeout => summary.timeouts += 1,
+                Outcome::MemoryOut => summary.memory_outs += 1,
                 Outcome::NotBuilt => summary.not_built += 1,
             }
         }
@@ -392,7 +446,7 @@ mod tests {
 
     fn sh(script: &str, timeout: Duration) -> Outcome {
         let cmd = ["sh".to_string(), "-c".to_string(), script.to_string()];
-        run_tool(&cmd, Path::new("old"), Path::new("new"), "f", timeout)
+        run_tool(&cmd, Path::new("old"), Path::new("new"), "f", timeout, None)
             .unwrap()
             .0
     }
@@ -441,6 +495,7 @@ mod tests {
             id: id.parse().unwrap(),
             outcome,
             elapsed: Duration::from_millis(10),
+            memory: None,
         }
     }
 
@@ -503,8 +558,37 @@ mod tests {
     }
 
     #[test]
+    fn measures_and_limits_the_memory() {
+        // About 300 MiB for a second.
+        let script = r#"$x = "a" x 300_000_000; sleep 1; print "eq\n""#;
+        let cmd = ["perl".to_string(), "-e".to_string(), script.to_string()];
+        let run = |limit| {
+            let memory = Memory::new(limit);
+            thread::scope(|scope| {
+                scope.spawn(|| memory.run());
+                let run = run_tool(
+                    &cmd,
+                    Path::new("a"),
+                    Path::new("b"),
+                    "f",
+                    TIMEOUT,
+                    Some(&memory),
+                );
+                memory.stop();
+                run.unwrap()
+            })
+        };
+        let (outcome, _, peak) = run(None);
+        assert_eq!(outcome, Outcome::Predicted(Kind::Eq));
+        assert!(peak.is_some_and(|kib| kib > 250 * 1024), "{peak:?}");
+        let (outcome, elapsed, _) = run(Some(100));
+        assert_eq!(outcome, Outcome::MemoryOut);
+        assert!(elapsed < Duration::from_secs(1));
+    }
+
+    #[test]
     fn fails_when_the_tool_does_not_exist() {
         let cmd = ["./does-not-exist".to_string()];
-        assert!(run_tool(&cmd, Path::new("a"), Path::new("b"), "f", TIMEOUT).is_err());
+        assert!(run_tool(&cmd, Path::new("a"), Path::new("b"), "f", TIMEOUT, None).is_err());
     }
 }

@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 
-use eqbench::analyse::{CaseResult, Outcome, Summary, TIMEOUT, resolve_tool, run_cases};
+use eqbench::analyse::{CaseResult, Limits, Outcome, Summary, TIMEOUT, resolve_tool, run_cases};
 use eqbench::build::Layout;
 use eqbench::case::{Case, CaseId, Dataset, Kind};
 use eqbench::diff::whole_file_diff;
@@ -69,6 +69,9 @@ struct AnalyseArgs {
     /// Number of cases analysed at the same time
     #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u64).range(1..))]
     jobs: u64,
+    /// Resident memory in MiB above which the tool is killed (default: no limit)
+    #[arg(long, value_name = "MIB", value_parser = clap::value_parser!(u64).range(1..))]
+    memory: Option<u64>,
     /// Write the result of every case to this file, as JSON lines
     #[arg(long, value_name = "FILE")]
     output: Option<PathBuf>,
@@ -163,6 +166,7 @@ fn analyse(dataset: &Dataset, args: &AnalyseArgs) -> Result<()> {
     let run = Run {
         tool: cmd.join(" "),
         timeout,
+        memory: args.memory,
         jobs,
     };
     let (mut writer, mut done) = match &args.output {
@@ -180,15 +184,23 @@ fn analyse(dataset: &Dataset, args: &AnalyseArgs) -> Result<()> {
     let style = Style::stdout();
     let width = id_width(dataset);
     let jobs_label = format!("{jobs} job{}", if jobs == 1 { "" } else { "s" });
+    let memory_label = args
+        .memory
+        .map(|mib| format!(", memory {}", format_memory(mib * 1024)))
+        .unwrap_or_default();
     eprintln!(
-        "analysing {} cases with `{}` (timeout {}s, {jobs_label})",
+        "analysing {} cases with `{}` (timeout {}s{memory_label}, {jobs_label})",
         todo.len(),
         cmd.join(" "),
         timeout.as_secs()
     );
 
     let start = Instant::now();
-    let new = run_cases(&tool, &todo, &layout, timeout, jobs, |result| {
+    let limits = Limits {
+        timeout,
+        memory: args.memory,
+    };
+    let new = run_cases(&tool, &todo, &layout, limits, jobs, |result| {
         let mark = if result.is_correct() {
             style.green("✓")
         } else if result.outcome == Outcome::Unknown {
@@ -197,11 +209,12 @@ fn analyse(dataset: &Dataset, args: &AnalyseArgs) -> Result<()> {
             style.red("✗")
         };
         let mut line = format!(
-            "{:width$}  expected {:3}  got {:9}  {mark}  {:>9}",
+            "{:width$}  expected {:3}  got {:10}  {mark}  {:>9}  {:>9}",
             result.id.to_string(),
             Outcome::Predicted(result.id.kind).label(),
             result.outcome.label(),
             format_duration(result.elapsed),
+            result.memory.map(format_memory).unwrap_or_default(),
         );
         if let Outcome::Invalid(output) = &result.outcome {
             line.push_str(&style.dim(&format!("  output: {output:?}")));
@@ -260,9 +273,13 @@ fn analyse(dataset: &Dataset, args: &AnalyseArgs) -> Result<()> {
         format_duration(summary.mean_time()),
         format_duration(wall),
     );
+    if let Some((id, peak)) = &summary.heaviest {
+        outln!("memory    max {} ({id})", format_memory(*peak));
+    }
     outln!(
-        "errors    {} timeouts, {} crashes, {} invalid outputs, {} not built",
+        "errors    {} timeouts, {} memory outs, {} crashes, {} invalid outputs, {} not built",
         summary.timeouts,
+        summary.memory_outs,
         summary.crashes,
         summary.invalid,
         summary.not_built
@@ -282,12 +299,16 @@ fn open_results(
     let mut kept = Vec::new();
     if resume && path.exists() {
         for record in results::load(path)? {
-            if record.tool != run.tool || record.timeout != run.timeout.as_secs() {
+            if record.tool != run.tool
+                || record.timeout != run.timeout.as_secs()
+                || record.memory_limit_mib != run.memory
+            {
                 bail!(
-                    "{} holds results of `{}` with a timeout of {}s, not of this run",
+                    "{} holds results of `{}` with a timeout of {}s and a memory limit of {:?} MiB, not of this run",
                     path.display(),
                     record.tool,
-                    record.timeout
+                    record.timeout,
+                    record.memory_limit_mib
                 );
             }
             let result = record.to_result()?;
@@ -314,6 +335,16 @@ fn open_results(
         );
     }
     Ok((writer, done))
+}
+
+/// A memory size given in KiB, in MiB or GiB.
+fn format_memory(kib: u64) -> String {
+    let mib = kib as f64 / 1024.0;
+    if mib < 1024.0 {
+        format!("{mib:.0} MiB")
+    } else {
+        format!("{:.1} GiB", mib / 1024.0)
+    }
 }
 
 /// A score in [0, 1] with 3 decimals, `-` when undefined.
