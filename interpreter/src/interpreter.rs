@@ -230,6 +230,16 @@ impl Interpreter {
                                 let sym_sqrt = sym.sqrt();
                                 cur_frame.stack.push(StackValue::Double(sqrt, sym_sqrt));
                             }
+                            "min" => {
+                                let rhs = cur_frame.stack.pop().unwrap();
+                                let lhs = cur_frame.stack.pop().unwrap();
+                                cur_frame.stack.push(lhs.min(&rhs));
+                            }
+                            "max" => {
+                                let rhs = cur_frame.stack.pop().unwrap();
+                                let lhs = cur_frame.stack.pop().unwrap();
+                                cur_frame.stack.push(lhs.max(&rhs));
+                            }
                             _ => todo!(),
                         }
                     } else if classname == "java/lang/Double" {
