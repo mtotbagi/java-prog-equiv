@@ -126,3 +126,38 @@ pub fn z3_float_to_sbv(f: &z3::ast::Float, size: u32) -> z3::ast::BV {
     let saturated = f.ge(&hi).ite(&max, &f.le(&lo).ite(&min, &converted));
     f.is_nan().ite(&BV::from_i64(0, size), &saturated)
 }
+
+/// Models a pure `java/lang/Math` function `double^n -> double` that Z3 cannot
+/// express (transcendentals etc.) as an uninterpreted function named `Math.<name>`.
+pub fn math_uf(name: &str, args: &[StackValue], concrete: impl Fn(&[f64]) -> f64) -> StackValue {
+    let (vals, syms): (Vec<f64>, Vec<z3::ast::Float>) = args
+        .iter()
+        .map(|a| match a {
+            StackValue::Double(v, s) => (*v, s.clone()),
+            other => panic!("Math.{name} expects double arguments, got {other:?}"),
+        })
+        .unzip();
+    let double = z3::Sort::double();
+    let domain: Vec<&z3::Sort> = vec![&double; args.len()];
+    let decl = z3::FuncDecl::new(format!("Math.{name}"), &domain, &double);
+    let sym_args: Vec<&dyn z3::ast::Ast> = syms.iter().map(|s| s as &dyn z3::ast::Ast).collect();
+    let sym = decl.apply(&sym_args).as_float().unwrap();
+    StackValue::Double(concrete(&vals), sym)
+}
+
+/// Exact `Math.getExponent`: unbiased exponent bits of a float/double.
+pub fn math_get_exponent(val: &StackValue) -> StackValue {
+    match val {
+        StackValue::Double(d, sym) => {
+            let exp = ((d.to_bits() >> 52) & 0x7ff) as i32 - 1023;
+            let bits = sym.to_ieee_bv().extract(62, 52).zero_ext(21);
+            StackValue::Int(exp, bits.bvsub(z3::ast::BV::from_i64(1023, 32)))
+        }
+        StackValue::Float(f, sym) => {
+            let exp = ((f.to_bits() >> 23) & 0xff) as i32 - 127;
+            let bits = sym.to_ieee_bv().extract(30, 23).zero_ext(24);
+            StackValue::Int(exp, bits.bvsub(z3::ast::BV::from_i64(127, 32)))
+        }
+        other => panic!("Math.getExponent expects float/double, got {other:?}"),
+    }
+}
