@@ -14,6 +14,35 @@ impl Interpreter {
         Interpreter { class }
     }
 
+    fn init_class(&self, mut state: State) -> State {
+        let Some(clinit) = self.class.methods.iter().find(|m| m.id.name == "<clinit>") else {
+            return state;
+        };
+        let clinit = clinit.id.clone();
+        let pc = ProgramCounter {
+            class: self.class.name.clone(),
+            method: clinit,
+            idx: 0,
+        };
+        let base_frame_count = state.frames.len();
+        state.frames.push(Frame::new(pc, vec![]));
+        loop {
+            let (outcome, _) = self.step(state);
+
+            match outcome {
+                Either::State(next_state) => {
+                    state = next_state;
+                    if state.frames.len() == base_frame_count {
+                        return state;
+                    }
+                }
+                Either::Result(..) => {
+                    panic!();
+                }
+            }
+        }
+    }
+
     pub fn interpret(
         &self,
         method: &Method,
@@ -27,6 +56,7 @@ impl Interpreter {
         };
         let (args, heap) = input;
         let mut state = State::new(pc.clone(), args, heap, &self.class.static_fields);
+        state = self.init_class(state);
         let mut path = vec![];
         let mut states = vec![state.clone()];
         for _ in 0..iter {
@@ -137,6 +167,8 @@ impl Interpreter {
                     cur_frame
                         .stack
                         .push(StackValue::Int(0, z3::ast::BV::from_i64(0, 32)));
+                } else if *is_static && *class_name == self.class.name {
+                    cur_frame.stack.push(state.statics[field_name].clone());
                 } else if *is_static {
                     todo!()
                 } else if *class_name != self.class.name {
@@ -507,7 +539,10 @@ impl Interpreter {
                 field_name,
                 field_ty,
             } => {
-                if *is_static {
+                if *is_static && *class_name == self.class.name {
+                    let field = state.statics.get_mut(field_name).unwrap();
+                    *field = cur_frame.stack.pop().unwrap();
+                } else if *is_static {
                     todo!()
                 } else if *class_name != self.class.name {
                     todo!()
