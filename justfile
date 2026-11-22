@@ -11,6 +11,10 @@ dev-env flags="":
 run analyser="":
     uv run jpamb analyse {{analyser}}
 
+# Run the eqbench CLI, e.g. `just eqbench details caldat-caldat-Neq`
+eqbench *args:
+    cargo run -q -p eqbench -- {{args}}
+
 [macos]
 flake-check:
     nix {{nix_flags}} flake check --all-systems

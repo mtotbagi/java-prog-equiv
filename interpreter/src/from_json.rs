@@ -1,7 +1,8 @@
 use serde_json::Value;
+use z3::ast::Float;
 
 use crate::{
-    Access, Cond, Instruction, Op, SimpleRef, StackType, StackValue,
+    Access, BitOp, Cond, Constant, Instruction, Op, SimpleRef, StackType, StackValue,
     java_class::{Class, Method, MethodId},
     java_types::SimpleType,
 };
@@ -19,6 +20,15 @@ impl FromJson for u32 {
     }
 }
 
+impl FromJson for i64 {
+    fn from_json(json: &Value) -> i64 {
+        let Value::Number(n) = json else {
+            panic!("Invalid json, {}", json)
+        };
+        n.as_i64().expect("Integer expected")
+    }
+}
+
 impl FromJson for i32 {
     fn from_json(json: &Value) -> i32 {
         let Value::Number(n) = json else {
@@ -28,10 +38,50 @@ impl FromJson for i32 {
     }
 }
 
+impl FromJson for f32 {
+    fn from_json(json: &Value) -> f32 {
+        let Value::Number(n) = json else {
+            panic!("Invalid json")
+        };
+        n.as_f64().expect("Float expected") as f32
+    }
+}
+
+impl FromJson for f64 {
+    fn from_json(json: &Value) -> f64 {
+        let Value::Number(n) = json else {
+            panic!("Invalid json")
+        };
+        if let Some(f) = n.as_f64() {
+            return f;
+        }
+
+        // AI fix to a parsing problem, unsure if this is what we need to do.
+
+        // The decompiler prints e.g. Double.MAX_VALUE with too few significant
+        // digits (1.797693134862316e308), which rounds past f64::MAX to infinity,
+        // and serde_json's as_f64 rejects non-finite values. JSON cannot encode
+        // a real infinity, so an overflowing literal must mean +-f64::MAX.
+        let f: f64 = n
+            .to_string()
+            .parse()
+            .unwrap_or_else(|_| panic!("Double expected, got {}", n));
+        if f.is_infinite() {
+            f64::MAX.copysign(f)
+        } else {
+            f
+        }
+    }
+}
+
 impl FromJson for StackValue {
     fn from_json(json: &Value) -> Self {
         if json.is_null() {
-            return Self::Ref(None);
+            return Self::Ref(
+                None,
+                z3::ast::Bool::from_bool(false),
+                z3::ast::BV::from_u64(0, 32),
+            );
         }
 
         let Value::String(s) = &json["type"] else {
@@ -43,9 +93,43 @@ impl FromJson for StackValue {
                 let ast = z3::ast::BV::from_i64(val as i64, 32);
                 Self::Int(val, ast)
             }
-            "float" => todo!(),
+            "float" => {
+                let val = f32::from_json(&json["value"]);
+                Self::Float(val, Float::from_f32(val))
+            }
             "ref" => todo!(),
+            "double" => {
+                let val = f64::from_json(&json["value"]);
+                Self::Double(val, Float::from_f64(val))
+            }
+            "long" => {
+                let val = i64::from_json(&json["value"]);
+                let ast = z3::ast::BV::from_i64(val, 64);
+                Self::Long(val, ast)
+            }
             _ => panic!("Invalid json {}", json),
+        }
+    }
+}
+
+impl FromJson for Constant {
+    fn from_json(json: &Value) -> Self {
+        if json.is_null() {
+            return Self::Stack(StackValue::Ref(
+                None,
+                z3::ast::Bool::from_bool(false),
+                z3::ast::BV::from_u64(0, 32),
+            ));
+        }
+
+        let Value::String(s) = &json["type"] else {
+            panic!("Invalid json {}", json)
+        };
+        if s == "string" {
+            let val = json["value"].as_str().unwrap().to_string();
+            Self::Heap(crate::util::create_string(&val, false))
+        } else {
+            Self::Stack(StackValue::from_json(json))
         }
     }
 }
@@ -60,6 +144,8 @@ impl FromJson for StackType {
             "float" => Self::Float,
             "ref" => Self::Ref,
             "class" => Self::Ref,
+            "double" => Self::Double,
+            "long" => Self::Long,
             _ => panic!("Invalid json"),
         }
     }
@@ -70,9 +156,14 @@ impl FromJson for SimpleType {
         if let Value::String(kind) = &json["kind"] {
             match kind.as_str() {
                 "array" => {
-                    return SimpleType::SimpleRef(Box::new(SimpleRef::Array {
-                        ty: SimpleType::from_json(&json["type"]),
-                    }));
+                    return SimpleType::SimpleRef(SimpleRef::Array {
+                        ty: SimpleType::from_json(&json["type"]).to_array_type(),
+                    });
+                }
+                "class" => {
+                    return SimpleType::SimpleRef(SimpleRef::Class {
+                        name: json["name"].as_str().unwrap().to_string(),
+                    });
                 }
                 _ => todo!(),
             }
@@ -90,6 +181,8 @@ impl FromJson for SimpleType {
             "byte" => Self::Byte,
             "char" => Self::Char,
             "short" => Self::Short,
+            "double" => Self::Double,
+            "long" => Self::Long,
             _ => panic!("Invalid json {}", json),
         }
     }
@@ -103,9 +196,14 @@ impl FromJson for Option<SimpleType> {
         if let Value::String(kind) = &json["kind"] {
             match kind.as_str() {
                 "array" => {
-                    return Some(SimpleType::SimpleRef(Box::new(SimpleRef::Array {
-                        ty: SimpleType::from_json(&json["type"]),
-                    })));
+                    return Some(SimpleType::SimpleRef(SimpleRef::Array {
+                        ty: SimpleType::from_json(&json["type"]).to_array_type(),
+                    }));
+                }
+                "class" => {
+                    return Some(SimpleType::SimpleRef(SimpleRef::Class {
+                        name: json["name"].as_str().unwrap().to_string(),
+                    }));
                 }
                 _ => todo!(),
             }
@@ -127,6 +225,8 @@ impl FromJson for Option<SimpleType> {
             "byte" => Some(SimpleType::Byte),
             "char" => Some(SimpleType::Char),
             "short" => Some(SimpleType::Short),
+            "double" => Some(SimpleType::Double),
+            "long" => Some(SimpleType::Long),
             _ => panic!("Invalid json {}", json),
         }
     }
@@ -147,6 +247,8 @@ impl FromJson for Option<StackType> {
             "float" => Some(StackType::Float),
             "ref" => Some(StackType::Ref),
             "class" => Some(StackType::Ref),
+            "double" => Some(StackType::Double),
+            "long" => Some(StackType::Long),
             _ => panic!("Invalid json"),
         }
     }
@@ -176,16 +278,22 @@ impl FromJson for Instruction {
                 index: u32::from_json(&json["index"]),
             },
             "push" => Self::Push {
-                value: StackValue::from_json(&json["value"]),
+                value: Constant::from_json(&json["value"]),
             },
             "return" => Self::Return {
                 ty: Option::<StackType>::from_json(&json["type"]),
             },
             "get" => {
-                if json["field"]["name"] != "$assertionsDisabled" {
-                    todo!()
+                let is_static = json["static"].as_bool().unwrap();
+                let field_name = json["field"]["name"].as_str().unwrap().to_string();
+                let class_name = json["field"]["class"].as_str().unwrap().to_string();
+                let field_ty = SimpleType::from_json(&json["field"]["type"]);
+                Self::Get {
+                    is_static,
+                    class_name,
+                    field_name,
+                    field_ty,
                 }
-                Self::Get
             }
             "new" => Self::New {
                 class: json["class"].as_str().unwrap().to_string(),
@@ -208,14 +316,14 @@ impl FromJson for Instruction {
             },
             "newarray" => Self::NewArray {
                 dim: u32::from_json(&json["dim"]),
-                ty: SimpleType::from_json(&json["type"]),
+                ty: SimpleType::from_json(&json["type"]).to_array_type(),
             },
             "array_store" => Self::ArrayStore {
-                ty: SimpleType::from_json(&json["type"]),
+                ty: SimpleType::from_json(&json["type"]).to_array_type(),
             },
             "arraylength" => Self::ArrayLength,
             "array_load" => Self::ArrayLoad {
-                ty: SimpleType::from_json(&json["type"]),
+                ty: SimpleType::from_json(&json["type"]).to_array_type(),
             },
             "incr" => Self::Incr {
                 index: u32::from_json(&json["index"]),
@@ -226,7 +334,42 @@ impl FromJson for Instruction {
             },
             // As best as I can determine, cast doesn't actually do anything
             "cast" => Self::NoOp,
+            "comparefloating" => Self::CompareFloat {
+                on_nan: i32::from_json(&json["onnan"]),
+                double: json["type"] == Value::String("double".to_string()),
+            },
+            "put" => {
+                let is_static = json["static"].as_bool().unwrap();
+                let field_name = json["field"]["name"].as_str().unwrap().to_string();
+                let class_name = json["field"]["class"].as_str().unwrap().to_string();
+                let field_ty = SimpleType::from_json(&json["field"]["type"]);
+                Self::Put {
+                    is_static,
+                    class_name,
+                    field_name,
+                    field_ty,
+                }
+            }
+            "bitopr" => Self::BitOpr {
+                op: BitOp::from_json(&json["operant"]),
+            },
+            "comparelongs" => Self::CompareLong,
+            "dup_x2" => Self::DupX2,
             _ => unimplemented!("{}", json),
+        }
+    }
+}
+
+impl FromJson for BitOp {
+    fn from_json(json: &Value) -> Self {
+        match json.as_str().unwrap() {
+            "shl" => BitOp::Shl,
+            "shr" => BitOp::Shr,
+            "ushr" => BitOp::Ushr,
+            "and" => BitOp::And,
+            "or" => BitOp::Or,
+            "xor" => BitOp::Xor,
+            _ => panic!("Invalid json {json}"),
         }
     }
 }
@@ -252,7 +395,7 @@ impl FromJson for Access {
             "static" => Self::Static,
             "dynamic" => todo!(),
             "interface" => todo!(),
-            "virtual" => todo!(),
+            "virtual" => Self::Virtual,
             _ => panic!("Invalid json"),
         }
     }
@@ -333,9 +476,14 @@ impl FromJson for Method {
             .map(Instruction::from_json)
             .collect();
 
+        let is_static = json["access"]
+            .as_array()
+            .is_some_and(|access| access.iter().any(|a| a == "static"));
+
         Method {
             id: MethodId::from_json(json),
             instructions,
+            is_static,
         }
     }
 }
