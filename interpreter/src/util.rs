@@ -91,6 +91,19 @@ pub fn z3_sbv_to_float(bv: &z3::ast::BV, sort: &z3::Sort) -> z3::ast::Float {
     }
 }
 
+/// Reinterprets the bits of `bv` (IEEE 754 interchange format) as a float of
+/// `sort`, like Java's `Double.longBitsToDouble`; `bv` must have the sort's width.
+pub fn z3_ieee_bv_to_float(bv: &z3::ast::BV, sort: &z3::Sort) -> z3::ast::Float {
+    use z3::ast::Ast;
+    let ctx = bv.get_ctx();
+    unsafe {
+        let ast =
+            z3_sys::Z3_mk_fpa_to_fp_bv(ctx.get_z3_context(), bv.get_z3_ast(), sort.get_z3_sort())
+                .unwrap();
+        z3::ast::Float::wrap(ctx, ast)
+    }
+}
+
 /// Java's float/double -> int/long conversion: NaN becomes 0, values are
 /// rounded towards zero, and out of range values saturate to MIN/MAX.
 pub fn z3_float_to_sbv(f: &z3::ast::Float, size: u32) -> z3::ast::BV {
