@@ -252,7 +252,10 @@ import org.sosy_lab.sv_benchmarks.Verifier;
 
 /** Calls both versions of the compared method on the same inputs. */
 public class Miter {{
-    /** Fails when the versions return different values, or one only throws. */
+    /**
+     * Fails when the versions return different values, or one only throws.
+     * Inputs on which a version runs out of stack or memory are skipped.
+     */
     public static void check({params}) {{
         {ty} oldResult = 0;
         {ty} newResult = 0;
@@ -267,6 +270,11 @@ public class Miter {{
             newResult = {NEW_PACKAGE}.{new_class}.{BRIDGE}({args});
         }} catch (Throwable e) {{
             newError = e;
+        }}
+        if (oldError instanceof VirtualMachineError || newError instanceof VirtualMachineError) {{
+            // A limit of the JVM, not a behaviour of the version: e.g. a
+            // recursion twice as deep overflows the stack on large inputs.
+            return;
         }}
         if (oldError != null || newError != null) {{
             // Both must throw. Their classes are not compared: JBMC does not
@@ -396,6 +404,7 @@ mod tests {
         assert!(miter.contains("oldResult = eqbench.v1.oldV.eqbenchCall(p0, p1);"));
         assert!(miter.contains("newResult = eqbench.v2.newV.eqbenchCall(p0, p1);"));
         assert!(miter.contains("oldResult != oldResult && newResult != newResult"));
+        assert!(miter.contains("if (oldError instanceof VirtualMachineError || newError instanceof VirtualMachineError) {"));
         assert!(miter.contains("check(Verifier.nondetDouble(), Verifier.nondetInt());"));
         let boolean = Signature {
             params: vec![],

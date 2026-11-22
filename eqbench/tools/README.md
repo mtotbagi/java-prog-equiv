@@ -132,7 +132,10 @@ merged `change(old, new)` program, hence last.
   `eqbench.Miter.check(<params>)` calls both versions in neutral packages and
   asserts that they return the same value (NaN equals NaN, `-0.0` equals `0.0`)
   or both throw an exception (of any class: JBMC does not model the identity of `Class` objects); `main` calls it on `Verifier.nondet*()`
-  inputs, as SV-COMP verifiers expect. Compiled for Java 8.
+  inputs, as SV-COMP verifiers expect. An input on which a version runs out of
+  stack or memory (`VirtualMachineError`) is skipped: when a recursion is twice
+  as deep in one version, where the stack overflows depends on the JVM.
+  Compiled for Java 8.
 - **JDK**: the JPF-based tools need Java 8 (`jdk8` in nixpkgs).
 - **Platform**: Java Ranger's SV-COMP archive ships Z3 for x86-64 only (Rosetta on
   Apple Silicon), Jazzer's launcher is the one released for macOS.
