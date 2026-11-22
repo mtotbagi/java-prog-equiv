@@ -210,6 +210,7 @@ def answers(runs: list[Run], colors: dict | None, theme: dict):
         return answers_per_tool(runs, theme)
     fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharex=True)
     timeout = runs[0].timeout
+    labels = []
     for ax, state, title in ((axes[0], "correct", "Correct answers"), (axes[1], "wrong", "Wrong answers")):
         ends = []
         for run in runs:
@@ -229,11 +230,13 @@ def answers(runs: list[Run], colors: dict | None, theme: dict):
         ax.yaxis.set_major_locator(MaxNLocator(integer=True))
         ax.set_title(title)
         ax.set_xlabel("time limit (s)")
-        direct_labels(ax, ends, timeout, theme)
+        labels.append((ax, ends))
     axes[0].set_ylabel("pairs")
     axes[0].legend(loc="upper left")
     subtitle(fig, runs, theme)
     fig.tight_layout()
+    for ax, ends in labels:
+        direct_labels(ax, ends, timeout, theme)
     return fig
 
 
@@ -244,6 +247,7 @@ def answers_per_tool(runs: list[Run], theme: dict):
     fig, axes = plt.subplots(rows, columns, figsize=(10, 2.6 * rows), sharex=True, sharey=True, squeeze=False)
     timeout = runs[0].timeout
     top = max(max(run.count("correct"), run.count("wrong")) for run in runs)
+    labels = []
     for ax, run in zip(axes.flat, runs):
         ends = []
         for state, color in (("correct", "#0ca30c"), ("wrong", "#d03b3b")):
@@ -252,7 +256,7 @@ def answers_per_tool(runs: list[Run], theme: dict):
                     where="post", color=color, linewidth=2, label=state)
             ends.append((len(times), state, color))
         ax.set_title(run.label)
-        direct_labels(ax, ends, timeout, theme)
+        labels.append((ax, ends))
     for ax in axes.flat[len(runs):]:
         ax.set_visible(False)
     axes[0][0].set_xscale("log")
@@ -266,11 +270,17 @@ def answers_per_tool(runs: list[Run], theme: dict):
     axes[0][0].legend(loc="upper left")
     subtitle(fig, runs, theme)
     fig.tight_layout()
+    for ax, ends in labels:
+        direct_labels(ax, ends, timeout, theme)
     return fig
 
 
 def direct_labels(ax, ends: list, x: float, theme: dict) -> None:
-    """Count of each line at its right end, labels nudged 12 points apart."""
+    """Count of each line at its right end, labels nudged 12 points apart.
+
+    Called once the limits and the layout are final: the nudge is computed
+    from where the ends are drawn.
+    """
     to_points = 72 / ax.figure.dpi
     previous = None
     for y, _, color in sorted(ends):
