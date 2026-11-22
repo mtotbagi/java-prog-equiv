@@ -1,5 +1,5 @@
 use crate::{
-    StackValue,
+    HeapValue,
     instruction::Instruction,
     java_types::{SimpleRef, SimpleType},
 };
@@ -36,7 +36,7 @@ pub struct Method {
     pub is_static: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MethodId {
     pub name: String,
     pub params: Box<[SimpleType]>,

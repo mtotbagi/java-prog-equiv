@@ -54,9 +54,45 @@ impl Interpreter {
             method: method.id.clone(),
             idx: 0,
         };
-        let (args, heap) = input;
+        let (mut args, mut heap) = input;
+        let this_idx = heap.heap.len();
+        // Temp fix for when entry point is non-static method
+        if !method.is_static {
+            heap.heap.push(self.class.new_object());
+            args.insert(
+                0,
+                StackValue::Ref(
+                    Some(this_idx as u32),
+                    z3_true(),
+                    BV::from_u64(this_idx as u64, 32),
+                ),
+            );
+        }
         let mut state = State::new(pc.clone(), args, heap, &self.class.static_fields);
         state = self.init_class(state);
+        if !method.is_static {
+            let constructor = self
+                .class
+                .methods
+                .iter()
+                .find(|m| m.id.params.is_empty() && m.id.name == "<init>");
+            if let Some(constructor) = constructor {
+                state.frames.push(Frame::new(
+                    ProgramCounter {
+                        class: self.class.name.clone(),
+                        method: constructor.id.clone(),
+                        idx: 0,
+                    },
+                    vec![StackValue::Ref(
+                        Some(this_idx as u32),
+                        z3_true(),
+                        BV::from_u64(this_idx as u64, 32),
+                    )],
+                ));
+            } else {
+                panic!()
+            }
+        }
         let mut path = vec![];
         let mut states = vec![state.clone()];
         for _ in 0..iter {
@@ -84,7 +120,7 @@ impl Interpreter {
             .class
             .methods
             .iter()
-            .filter(|m| m.id.name == cur_frame.program_counter.method.name)
+            .filter(|m| m.id == cur_frame.program_counter.method)
             .map(|m| &m.instructions)
             .next()
             .unwrap();
@@ -195,8 +231,8 @@ impl Interpreter {
                     self.class.new_object()
                 } else {
                     HeapValue::Object {
-                    name: class.clone(),
-                    fields: HashMap::new(),
+                        name: class.clone(),
+                        fields: HashMap::new(),
                     }
                 };
                 state.heap.heap.push(obj);
