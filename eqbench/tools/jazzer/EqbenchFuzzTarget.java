@@ -1,6 +1,7 @@
 import com.code_intelligence.jazzer.api.FuzzedDataProvider;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.Arrays;
 
 /**
  * Fuzz target of any eqbench miter: calls {@code eqbench.Miter.check} on
@@ -32,7 +33,14 @@ public class EqbenchFuzzTarget {
         try {
             CHECK.invoke(null, args);
         } catch (InvocationTargetException e) {
-            throw e.getCause();
+            Throwable cause = e.getCause();
+            if (cause instanceof AssertionError) {
+                // The inputs, to tell the difference found apart.
+                AssertionError witness = new AssertionError("the versions differ on " + Arrays.toString(args));
+                witness.setStackTrace(cause.getStackTrace());
+                throw witness;
+            }
+            throw cause;
         }
     }
 

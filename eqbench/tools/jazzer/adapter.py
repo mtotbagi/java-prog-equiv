@@ -7,7 +7,7 @@ Fuzzes the miter of the case (`EQBENCH_MITER`, see eqbench's src/miter.rs)
 through `EqbenchFuzzTarget`, which feeds `eqbench.Miter.check` with fuzzed
 inputs. Testing can only show non-equivalence:
 
-- the miter's assertion fails on some input: `neq`;
+- the miter's assertion fails on some input: `neq`, the input is printed;
 - no difference found within the budget: `unknown`.
 
 The reason of the answer is printed on the second line.
@@ -15,6 +15,7 @@ The reason of the answer is printed on the second line.
 
 import argparse
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -66,7 +67,9 @@ def fuzz(classes: Path, target: Path, deadline: float) -> tuple[str, str]:
             return "unknown", "out of time"
     output = done.stdout + done.stderr
     if "java.lang.AssertionError" in output:
-        return "neq", "the versions differ on a fuzzed input"
+        # Thrown by EqbenchFuzzTarget with the inputs.
+        witness = re.search(r"the versions differ on \[.*?\]$", output, re.M)
+        return "neq", witness.group(0) if witness else "the versions differ on a fuzzed input"
     runs = [line for line in output.splitlines() if line.startswith("Done ")]
     if done.returncode == 0:
         return "unknown", f"no difference found ({runs[-1] if runs else 'no run count'})"
