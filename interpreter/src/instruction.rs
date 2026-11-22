@@ -122,20 +122,33 @@ impl BitOp {
 
     pub fn op_long(&self, lhs: i64, rhs: i64) -> i64 {
         match self {
-            BitOp::Shl => lhs.wrapping_shl(rhs as u32),
-            BitOp::Shr => lhs.wrapping_shr(rhs as u32),
-            BitOp::Ushr => (lhs as u64).wrapping_shr(rhs as u32) as i64,
             BitOp::And => lhs & rhs,
             BitOp::Or => lhs | rhs,
             BitOp::Xor => lhs ^ rhs,
+            _ => panic!("Invalid bit opr"),
         }
     }
 
-    pub fn op_z3_bv(&self, lhs: &BV, rhs: &BV) -> BV {
+    pub fn op_long_int(&self, lhs: i64, rhs: i32) -> i64 {
         match self {
-            BitOp::Shl => lhs.bvshl(rhs),
-            BitOp::Shr => lhs.bvashr(rhs),
-            BitOp::Ushr => lhs.bvlshr(rhs),
+            BitOp::Shl => lhs.wrapping_shl(rhs as u32),
+            BitOp::Shr => lhs.wrapping_shr(rhs as u32),
+            BitOp::Ushr => (lhs as u64).wrapping_shr(rhs as u32) as i64,
+            _ => panic!("Invalid bit opr"),
+        }
+    }
+
+    /// Performs bit operation on symbolic bitvectors according to the corresponding Java operations
+    pub fn op_z3_bv(&self, lhs: &BV, rhs: &BV) -> BV {
+        let shift_amount = {
+            let width = lhs.get_size();
+            let masked = rhs.bvand(BV::from_u64(u64::from(width - 1), rhs.get_size()));
+            masked.zero_ext(width - rhs.get_size())
+        };
+        match self {
+            BitOp::Shl => lhs.bvshl(shift_amount),
+            BitOp::Shr => lhs.bvashr(shift_amount),
+            BitOp::Ushr => lhs.bvlshr(shift_amount),
             BitOp::And => lhs.bvand(rhs),
             BitOp::Or => lhs.bvor(rhs),
             BitOp::Xor => lhs.bvxor(rhs),
