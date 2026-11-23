@@ -234,7 +234,8 @@ def answers(runs: list[Run], colors: dict | None, theme: dict):
     axes[0].set_ylabel("pairs")
     axes[0].legend(loc="upper left")
     subtitle(fig, runs, theme)
-    fig.tight_layout()
+    # Room between the panels for the direct labels, which the layout ignores.
+    fig.tight_layout(w_pad=3)
     for ax, ends in labels:
         direct_labels(ax, ends, timeout, theme)
     return fig
@@ -269,7 +270,7 @@ def answers_per_tool(runs: list[Run], theme: dict):
         row[0].set_ylabel("pairs")
     axes[0][0].legend(loc="upper left")
     subtitle(fig, runs, theme)
-    fig.tight_layout()
+    fig.tight_layout(w_pad=3)
     for ax, ends in labels:
         direct_labels(ax, ends, timeout, theme)
     return fig
