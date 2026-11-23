@@ -120,6 +120,62 @@ Each found by Jazzer or JBMC, then run on both versions.
 | ell-ellpi-Eq | 2.23e-308, 0.0, -1.66e308 | NaN | 1.22e-308 | Arguments out of range |
 | gam-gser-Eq | 1.67e305, 1.80e308, -1.80e308 | Infinity | -1.80e308 | Overflow to infinity |
 
+### At 1800 s
+
+The same 248 pairs at 1800 s per pair, at most 2 GiB per tool, 6 pairs at a
+time. The tools are added as their runs end; the plots are made by
+`just eqbench-plot eqbench/results/*-1800.jsonl`.
+
+| Tool | Correct | F1 | eq precision / recall | neq precision / recall | unknown | timeout | memory out | error | Mean time | Max memory |
+|---|---|---|---|---|---|---|---|---|---|---|
+| PASDA | 66/248 | 0.422 | 0.964 / 0.200 | 1.000 / 0.345 | 177 | 3 | 1 | 0 | 290.4 s | 2088 MiB |
+| ARDiff | 49/248 | 0.327 | 0.966 / 0.207 | 1.000 / 0.186 | 168 | 4 | 26 | 0 | 152.2 s | 2168 MiB |
+| IMP-S | 41/248 | 0.276 | 0.882 / 0.111 | 0.765 / 0.230 | 193 | 4 | 0 | 0 | 262.9 s | 1960 MiB |
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../results/plots/answers-1800-dark.svg">
+  <img alt="Correct and wrong answers of each tool by time limit, from 0.1 to 1800 s" src="../results/plots/answers-1800.svg">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../results/plots/quality-1800-dark.svg">
+  <img alt="Correct, wrong, unknown, timeout, memory out and error answers of each tool at 1800 s" src="../results/plots/quality-1800.svg">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../results/plots/benchmarks-1800-dark.svg">
+  <img alt="Correct answers of each tool per benchmark of EqBench at 1800 s" src="../results/plots/benchmarks-1800.svg">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../results/plots/memory-1800-dark.svg">
+  <img alt="Share of the pairs analysed within a peak memory, per tool, at 1800 s" src="../results/plots/memory-1800.svg">
+</picture>
+
+- **The times are inflated.** The machine was short of memory: 6 JVMs of
+  about 1.6 GB each and the other applications filled the 16 GB, and up to two
+  thirds of the CPU time went to the system, compressing and swapping memory.
+  An answer given in both runs took a median 1.4 times longer than at 300 s for
+  PASDA, 1.7 for ARDiff and 3.4 for IMP-S, which ran last. An answer after
+  300 s here does not show that 300 s is too short: of the 11 PASDA gives, it
+  gave 5 within 300 s in the run at 300 s.
+- **A larger timeout answers a few more pairs.** PASDA gets 6 more right than
+  at 300 s, between 509 and 1515 s: ell-plgndr-Eq, gam-expint-Neq and both pairs
+  of ran-ranone and of tsafe-snippet. IMP-S gets 3 more, between 944 and
+  1236 s: both pairs of gam-gcf and gam-gser-Neq. Neither gives a new wrong
+  answer.
+- **ARDiff** gets as many right (49). It is given the time left (`--t`), and
+  with 1800 s, 15 more pairs go over 2 GiB (26). 7 of them do so within 3 min,
+  where at 300 s ARDiff ran to the timeout. bess-bessy-Neq, answered `neq` in
+  18 s at 300 s, goes over 2 GiB in 18 s; tcas-altseptest-Neq is answered
+  instead, at 1045 s.
+- **Memory**: the peaks, and the 2 GiB limit, are on resident memory, which
+  leaves out what macOS compressed or swapped. Under this load they understate
+  what the JVMs held.
+- **To come**: PRV, and DSE, whose 9 pairs that exited at once with status 1
+  are run again. Then JBMC and Java Ranger 4 pairs at a time, as 6 at 2 GiB do
+  not fit in 16 GB, and `prog-equiv` and Jazzer 6 at a time.
+
 ## Shortlist
 
 In integration order: cheapest and most informative first.
