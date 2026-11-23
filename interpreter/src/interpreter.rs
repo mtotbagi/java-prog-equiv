@@ -10,6 +10,9 @@ pub struct Interpreter {
     class: Class,
 }
 impl Interpreter {
+    pub fn class(&self) -> &Class {
+        &self.class
+    }
     pub fn new(class: Class) -> Self {
         Interpreter { class }
     }
@@ -54,20 +57,7 @@ impl Interpreter {
             method: method.id.clone(),
             idx: 0,
         };
-        let (mut args, mut heap) = input;
-        let this_idx = heap.heap.len();
-        // Temp fix for when entry point is non-static method
-        if !method.is_static {
-            heap.heap.push(self.class.new_object());
-            args.insert(
-                0,
-                StackValue::Ref(
-                    Some(this_idx as u32),
-                    z3_true(),
-                    BV::from_u64(this_idx as u64, 32),
-                ),
-            );
-        }
+        let (args, heap) = input;
         let mut state = State::new(pc.clone(), args, heap, &self.class.static_fields);
         state = self.init_class(state);
         if !method.is_static {
@@ -83,11 +73,7 @@ impl Interpreter {
                         method: constructor.id.clone(),
                         idx: 0,
                     },
-                    vec![StackValue::Ref(
-                        Some(this_idx as u32),
-                        z3_true(),
-                        BV::from_u64(this_idx as u64, 32),
-                    )],
+                    vec![StackValue::Ref(Some(0), z3_true(), BV::from_u64(0, 32))],
                 ));
             } else {
                 panic!()
