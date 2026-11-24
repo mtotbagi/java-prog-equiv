@@ -123,14 +123,22 @@ Each found by Jazzer or JBMC, then run on both versions.
 ### At 1800 s
 
 The same 248 pairs at 1800 s per pair, at most 2 GiB per tool, 6 pairs at a
-time. The tools are added as their runs end; the plots are made by
+time, 4 for JBMC and Java Ranger: 6 of them at 2 GiB do not fit in 16 GB.
+`prog-equiv` is the version of master, 6abae1f, not the one of the table at
+300 s; run apart at 300 s, 3 pairs at a time, it gets 115 pairs right. The
+tools are added as their runs end; the plots are made by
 `just eqbench-plot eqbench/results/*-1800.jsonl`.
 
 | Tool | Correct | F1 | eq precision / recall | neq precision / recall | unknown | timeout | memory out | error | Mean time | Max memory |
 |---|---|---|---|---|---|---|---|---|---|---|
+| prog-equiv | 121/248 | 0.621 | 0.899 / 0.526 | 0.833 / 0.442 | 0 | 52 | 16 | 41 | 425.5 s | 2417 MiB |
+| JBMC | 88/248 | 0.501 | 1.000 / 0.215 | 0.855 / 0.522 | 93 | 0 | 57 | 0 | 281.6 s | 2591 MiB |
+| Java Ranger | 76/248 | 0.462 | 0.975 / 0.289 | 0.881 / 0.327 | 143 | 0 | 23 | 0 | 534.8 s | 2207 MiB |
 | PASDA | 66/248 | 0.422 | 0.964 / 0.200 | 1.000 / 0.345 | 177 | 3 | 1 | 0 | 290.4 s | 2088 MiB |
+| PRV | 60/248 | 0.392 | 0.960 / 0.178 | 1.000 / 0.319 | 187 | 0 | 0 | 0 | 297.6 s | 2007 MiB |
 | ARDiff | 49/248 | 0.327 | 0.966 / 0.207 | 1.000 / 0.186 | 168 | 4 | 26 | 0 | 152.2 s | 2168 MiB |
 | IMP-S | 41/248 | 0.276 | 0.882 / 0.111 | 0.765 / 0.230 | 193 | 4 | 0 | 0 | 262.9 s | 1960 MiB |
+| DSE | 34/248 | 0.241 | 1.000 / 0.141 | 1.000 / 0.133 | 203 | 3 | 8 | 0 | 102.3 s | 2164 MiB |
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../results/plots/answers-1800-dark.svg">
@@ -152,29 +160,58 @@ time. The tools are added as their runs end; the plots are made by
   <img alt="Share of the pairs analysed within a peak memory, per tool, at 1800 s" src="../results/plots/memory-1800.svg">
 </picture>
 
-- **The times are inflated.** The machine was short of memory: 6 JVMs of
-  about 1.6 GB each and the other applications filled the 16 GB, and up to two
-  thirds of the CPU time went to the system, compressing and swapping memory.
-  An answer given in both runs took a median 1.4 times longer than at 300 s for
-  PASDA, 1.7 for ARDiff and 3.4 for IMP-S, which ran last. An answer after
-  300 s here does not show that 300 s is too short: of the 11 PASDA gives, it
-  gave 5 within 300 s in the run at 300 s.
-- **A larger timeout answers a few more pairs.** PASDA gets 6 more right than
-  at 300 s, between 509 and 1515 s: ell-plgndr-Eq, gam-expint-Neq and both pairs
-  of ran-ranone and of tsafe-snippet. IMP-S gets 3 more, between 944 and
-  1236 s: both pairs of gam-gcf and gam-gser-Neq. Neither gives a new wrong
-  answer.
+- **The times of the PASDA family are inflated.** The machine was short of
+  memory: 6 JVMs of about 1.6 GB each and the other applications filled the
+  16 GB, and up to two thirds of the CPU time went to the system, compressing
+  and swapping memory. An answer given in both runs took a median 1.4 times
+  longer than at 300 s for PASDA, 1.7 for ARDiff, 2.5 for DSE, 3.4 for IMP-S
+  and 2.7 for PRV. An answer after 300 s here does not show that 300 s is too
+  short: of the 11 PASDA gives, it gave 5 within 300 s in the run at 300 s, PRV
+  3 of its 8. JBMC and Java Ranger, 4 pairs at a time once the machine had
+  memory to spare, took 0.68 and 0.44 times as long as at 300 s: the series at
+  300 s was short of memory too.
+- **A larger timeout answers a few more pairs**, and loses one:
+  - PASDA gets 6 more right than at 300 s, between 509 and 1515 s:
+    ell-plgndr-Eq, gam-expint-Neq and both pairs of ran-ranone and of
+    tsafe-snippet.
+  - `prog-equiv` gets 6 more than master at 300 s, between 378 and 1781 s:
+    REVE-loop-Eq, gam-ei-Neq and the `Neq` pairs of bess-bessj0, bessk0, bessk1
+    and bessy0. It times out on 52 pairs instead of 60.
+  - PRV gets 5 more, between 379 and 1074 s: gam-gser-Neq, ran-gamdev-Neq,
+    ran-poidev-Neq and both pairs of tsafe-snippet.
+  - IMP-S gets 3 more, between 944 and 1236 s: both pairs of gam-gcf and
+    gam-gser-Neq.
+  - Java Ranger gets 3 more, between 466 and 1313 s: caldat-julday-Eq,
+    gam-gser-Neq and ran-gammln-Eq.
+  - JBMC gets 3 more, between 747 and 1319 s: CLEVER-is_prime1-Neq,
+    CLEVER-is_prime3-Eq and ell-rf-Neq. It loses bess-bessk1-Neq, answered in
+    152 s at 300 s, which goes over 2 GiB in 31 s. Its one new wrong answer,
+    `neq` on CLEVER-is_prime2-Eq at 1320 s, is one of the 13 `Eq` pairs that
+    differ on the JVM.
+  - DSE gets the same 34 right. No other tool gives a new wrong answer.
 - **ARDiff** gets as many right (49). It is given the time left (`--t`), and
   with 1800 s, 15 more pairs go over 2 GiB (26). 7 of them do so within 3 min,
   where at 300 s ARDiff ran to the timeout. bess-bessy-Neq, answered `neq` in
   18 s at 300 s, goes over 2 GiB in 18 s; tcas-altseptest-Neq is answered
   instead, at 1045 s.
+- **JBMC goes over 2 GiB on 57 pairs**, against 7 at 300 s, 18 of them within
+  3 to 8 s. At 300 s, 15 of these 18 answered `unknown` at the deadline,
+  peaking at 1.0 to 1.9 GiB. JBMC does the same work in its first seconds
+  whatever the timeout, its unwinding bound doubling from 1, so the difference
+  is in the measure: at 300 s, 6 pairs at a time, macOS compressed part of the
+  memory, which resident memory leaves out. Java Ranger goes over 2 GiB on 23
+  pairs against 4, DSE on 8 against 1.
 - **Memory**: the peaks, and the 2 GiB limit, are on resident memory, which
-  leaves out what macOS compressed or swapped. Under this load they understate
-  what the JVMs held.
-- **To come**: PRV, and DSE, whose 9 pairs that exited at once with status 1
-  are run again. Then JBMC and Java Ranger 4 pairs at a time, as 6 at 2 GiB do
-  not fit in 16 GB, and `prog-equiv` and Jazzer 6 at a time.
+  leaves out what macOS compressed or swapped. Under the load of the PASDA
+  family they understate what the JVMs held.
+- **`prog-equiv`** (master) answers `eq` whenever it finds no difference among
+  at most 20 paths of at most 1000 instructions per version, even when no trace
+  finishes: hence its 8 wrong `eq`. Its 10 other wrong answers are `neq` on `Eq`
+  pairs that differ on the JVM. It crashes on 41 pairs: `System.out` (24,
+  `interpreter/src/interpreter.rs:195`), classes other than `oldV` / `newV`
+  (14), a class without a constructor without parameters (2) and an `int[]`
+  parameter (1).
+- **To come**: Jazzer, 6 pairs at a time.
 
 ## Shortlist
 

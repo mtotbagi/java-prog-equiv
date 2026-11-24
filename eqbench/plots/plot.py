@@ -232,10 +232,12 @@ def answers(runs: list[Run], colors: dict | None, theme: dict):
         ax.set_xlabel("time limit (s)")
         labels.append((ax, ends))
     axes[0].set_ylabel("pairs")
-    axes[0].legend(loc="upper left")
     subtitle(fig, runs, theme)
     # Room between the panels for the direct labels, which the layout ignores.
     fig.tight_layout(w_pad=3)
+    # Below the panels: in a corner, the legend would hide the curves that rise first.
+    handles, names = axes[0].get_legend_handles_labels()
+    fig.legend(handles, names, loc="upper center", bbox_to_anchor=(0.5, 0), ncols=min(len(runs), 4))
     for ax, ends in labels:
         direct_labels(ax, ends, timeout, theme)
     return fig
