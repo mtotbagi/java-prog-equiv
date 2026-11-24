@@ -20,7 +20,10 @@ impl ConcolicExecutor {
     }
 
     pub fn run(&self, method: &Method, iter: u32, max_runs: u32) -> Vec<Run> {
-        self.clone().into_iter(method, iter).take(max_runs as usize).collect()
+        self.clone()
+            .into_iter(method, iter)
+            .take(max_runs as usize)
+            .collect()
     }
 
     pub fn initial_input(&self, method: &Method) -> Result<(Vec<StackValue>, Heap), String> {
@@ -85,8 +88,9 @@ struct ConcolicPathsIter {
 }
 
 impl ConcolicPathsIter {
-    fn next_input(&mut self) -> Option<(Input, usize)> {loop {
-            let solver =  Solver::new();
+    fn next_input(&mut self) -> Option<(Input, usize)> {
+        loop {
+            let solver = Solver::new();
             solver.set_params(&self.params);
             let path = self.paths_to_explore.pop()?;
             for c in &path {
@@ -94,7 +98,7 @@ impl ConcolicPathsIter {
             }
             if solver.check() == SatResult::Sat {
                 let model = solver.get_model().unwrap();
-                return Some((next_input(&model, &self.initial_input), path.len()))
+                return Some((next_input(&model, &self.initial_input), path.len()));
             }
         }
     }
@@ -105,7 +109,9 @@ impl Iterator for ConcolicPathsIter {
 
     fn next(&mut self) -> Option<Self::Item> {
         let (input, depth) = self.next_input()?;
-        let (_,path,r) = self.interpreter.interpret(&self.method, input.clone(), self.step_count);
+        let (_, path, r) = self
+            .interpreter
+            .interpret(&self.method, input.clone(), self.step_count);
         // Negate every condition from some depth n
         for i in depth..path.len() {
             let mut new_path = Vec::with_capacity(i + 1);
@@ -116,10 +122,9 @@ impl Iterator for ConcolicPathsIter {
             new_path.push(path[i].not());
             self.paths_to_explore.push(new_path);
         }
-        return Some((input, path, r))
+        Some((input, path, r))
     }
 }
-
 
 /// The same input, but with the values the model assigns to the symbolic variables.
 pub fn next_input(model: &Model, old_input: &(Vec<StackValue>, Heap)) -> (Vec<StackValue>, Heap) {
