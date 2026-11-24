@@ -42,11 +42,10 @@ fn main() {
         }
     };
 
-    let equiv = are_equiv(class_old.clone(), class_new.clone(), method).unwrap_or(false);
-    if equiv {
-        println!("eq")
-    } else {
-        println!("neq")
+    match are_equiv(class_old.clone(), class_new.clone(), method) {
+        Some(true) => println!("eq"),
+        Some(false) => println!("neq"),
+        None => println!("unknown"),
     }
 }
 
@@ -123,7 +122,7 @@ fn are_equiv(class_old: Class, class_new: Class, method: &Method) -> Option<bool
     params.set_u32("timeout", interpreter::SOLVER_TIMEOUT_MS);
     let res_old = conc_old.run(method, 1000, 20);
     let res_new = conc_new.run(method, 1000, 20);
-
+    let mut is_unkown = false;
     for (old_input, p1, r1) in res_old {
         for (_, p2, r2) in &res_new {
             if r1 == *r2 {
@@ -170,7 +169,7 @@ fn are_equiv(class_old: Class, class_new: Class, method: &Method) -> Option<bool
                         }
                     }
                 }
-                z3::SatResult::Unknown => return None,
+                z3::SatResult::Unknown => is_unkown = true,
                 z3::SatResult::Unsat => {}
             }
             if let ExeResult::Ok(Some(out1)) = &r1
@@ -219,10 +218,10 @@ fn are_equiv(class_old: Class, class_new: Class, method: &Method) -> Option<bool
                         panic!()
                     }
                 }
-                z3::SatResult::Unknown => return None,
+                z3::SatResult::Unknown => is_unkown = true,
                 z3::SatResult::Unsat => {}
             }
         }
     }
-    Some(true)
+    if is_unkown { None } else { Some(true) }
 }
