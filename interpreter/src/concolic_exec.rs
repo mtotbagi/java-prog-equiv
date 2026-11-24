@@ -1,12 +1,12 @@
 use z3::{
-    Model, SatResult, Solver,
+    Model, Params, SatResult, Solver,
     ast::{BV, Bool, Float},
 };
 
 use crate::*;
 
 pub type Run = ((Vec<StackValue>, Heap), Vec<z3::ast::Bool>, ExeResult);
-
+pub const SOLVER_TIMEOUT_MS: u32 = 100;
 pub struct ConcolicExecutor {
     interpreter: Interpreter,
 }
@@ -20,7 +20,8 @@ impl ConcolicExecutor {
 
     pub fn run(&self, method: &Method, iter: u32, max_runs: u32) -> Vec<Run> {
         let mut output: Vec<Run> = Vec::new();
-
+        let mut params = Params::new();
+        params.set_u32("timeout", SOLVER_TIMEOUT_MS);
         // The first concrete input is all zeros, with one named symbolic variable per
         // parameter (see `initial_input`).
         let initial_input = self.initial_input(method).unwrap_or_else(|e| panic!("{e}"));
@@ -36,6 +37,7 @@ impl ConcolicExecutor {
             // Negate every condition from some depth n
             for i in depth..path.len() {
                 let s = Solver::new();
+                s.set_params(&params);
                 // Keep the path the same until the negated condition
                 for c in &path[..i] {
                     s.assert(c);

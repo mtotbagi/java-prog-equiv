@@ -118,6 +118,9 @@ fn are_equiv(class_old: Class, class_new: Class, method: &Method) -> Option<bool
     let conc_new = ConcolicExecutor::new(class_new.clone());
     let interpreter_new = Interpreter::new(class_new);
     let interpreter_old = Interpreter::new(class_old);
+
+    let mut params = Params::new();
+    params.set_u32("timeout", interpreter::SOLVER_TIMEOUT_MS);
     let res_old = conc_old.run(method, 1000, 20);
     let res_new = conc_new.run(method, 1000, 20);
 
@@ -131,6 +134,7 @@ fn are_equiv(class_old: Class, class_new: Class, method: &Method) -> Option<bool
                 continue;
             }
             let s = Solver::new();
+            s.set_params(&params);
             for c in &p1 {
                 s.assert(c);
             }
@@ -150,21 +154,21 @@ fn are_equiv(class_old: Class, class_new: Class, method: &Method) -> Option<bool
                     {
                     } else if old_res != new_res
                         && let ExeResult::Ok(output1) = old_res
-                            && let ExeResult::Ok(output2) = new_res
-                        {
-                            match (output1, output2) {
-                                (None, None) => (),
-                                (Some(o1), Some(o2)) => {
-                                    if !o1.0.are_concrete_equal(&o2.0) {
-                                        eprintln!("{:?}", input);
-                                        eprintln!("{:?}, {:?}", o1.0, o2.0);
+                        && let ExeResult::Ok(output2) = new_res
+                    {
+                        match (output1, output2) {
+                            (None, None) => (),
+                            (Some(o1), Some(o2)) => {
+                                if !o1.0.are_concrete_equal(&o2.0) {
+                                    eprintln!("{:?}", input);
+                                    eprintln!("{:?}, {:?}", o1.0, o2.0);
 
-                                        return Some(false);
-                                    }
+                                    return Some(false);
                                 }
-                                _ => return Some(false),
                             }
+                            _ => return Some(false),
                         }
+                    }
                 }
                 z3::SatResult::Unknown => return None,
                 z3::SatResult::Unsat => {}
