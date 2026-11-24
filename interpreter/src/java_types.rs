@@ -200,8 +200,8 @@ impl StackValue {
                 (Some(_), Some(_)) => todo!(),
                 _ => false,
             },
-            (StackValue::Float(f1, _), StackValue::Float(f2, _)) => *f1 == *f2,
-            (StackValue::Double(f1, _), StackValue::Double(f2, _)) => *f1 == *f2,
+            (StackValue::Float(f1, _), StackValue::Float(f2, _)) => f1.to_bits() == f2.to_bits(),
+            (StackValue::Double(f1, _), StackValue::Double(f2, _)) => f1.to_bits() == f2.to_bits(),
             _ => false,
         }
     }
