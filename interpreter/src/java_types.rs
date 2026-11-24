@@ -124,6 +124,10 @@ impl StackValue {
         }
     }
 
+    pub fn is_ref(&self) -> bool {
+        matches!(self, Self::Ref(_, _, _))
+    }
+
     pub(crate) fn to_heap_value(&self, ty: &SimpleType) -> HeapValue {
         match (self, ty) {
             (StackValue::Int(i, bv), SimpleType::Int) => HeapValue::Int(*i, bv.clone()),
@@ -202,6 +206,23 @@ impl StackValue {
             },
             (StackValue::Float(f1, _), StackValue::Float(f2, _)) => f1.to_bits() == f2.to_bits(),
             (StackValue::Double(f1, _), StackValue::Double(f2, _)) => f1.to_bits() == f2.to_bits(),
+            _ => false,
+        }
+    }
+
+    pub fn are_symbolic_equal(&self, other: &Self) -> bool {
+        match (self, other) {
+            (StackValue::Int(_, s1), StackValue::Int(_, s2)) => *s1 == *s2,
+            (StackValue::Long(_, s1), StackValue::Long(_, s2)) => *s1 == *s2,
+            (StackValue::Ref(_, bs1, _s1), StackValue::Ref(_, bs2, _s2)) => {
+                if bs1.as_bool() == Some(false) && bs2.as_bool() == Some(false) {
+                    todo!();
+                } else {
+                    true
+                }
+            }
+            (StackValue::Float(_, s1), StackValue::Float(_, s2)) => s1 == s2,
+            (StackValue::Double(_, s1), StackValue::Double(_, s2)) => s1 == s2,
             _ => false,
         }
     }

@@ -123,15 +123,48 @@ fn are_equiv(class_old: Class, class_new: Class, method: &Method) -> Option<bool
     let res_old = conc_old.run(method, 1000, 20);
     let res_new = conc_new.run(method, 1000, 20);
     let mut is_unkown = false;
-    for (old_input, p1, r1) in res_old {
-        for (_, p2, r2) in &res_new {
+    for (old_input1, p1, r1) in res_old {
+        for (old_input2, p2, r2) in &res_new {
             if r1 == *r2 {
                 continue;
             }
+
+            // for Ok results it's enough to check if the symbolic values are equal
+            if let ExeResult::Ok(Some((ref o1, _))) = r1
+                && let ExeResult::Ok(Some((o2, _))) = r2
+                && o1.are_symbolic_equal(o2)
+            {
+                continue;
+            }
+
             // If any of the traces are unfinished, we don't use them as evidence
             if matches!(r1, ExeResult::DidNotFinish) || matches!(r2, ExeResult::DidNotFinish) {
                 continue;
             }
+
+            // if for both cases we use the same concrete value we as inputs we can save some time
+            let (ref params1, _) = old_input1;
+            let (params2, _) = old_input2;
+            let inputs_eq = params1.iter().zip(params2).fold(true, |acc, (p1, p2)| {
+                // non-static methods they get the reference to the object calling as an input
+                if p1.is_ref() && p2.is_ref() && p1 == p2 {
+                    acc
+                } else {
+                    acc && p1.are_concrete_equal(p2)
+                }
+            });
+            if inputs_eq {
+                if let ExeResult::Ok(Some((ref o1, _))) = r1
+                    && let ExeResult::Ok(Some((o2, _))) = r2
+                    && o1.are_concrete_equal(o2)
+                {
+                    continue;
+                } else {
+                    // in all other cases the outputs are not equal since they were checked above
+                    return Some(false);
+                }
+            }
+
             let s = Solver::new();
             s.set_params(&params);
             for c in &p1 {
@@ -145,7 +178,7 @@ fn are_equiv(class_old: Class, class_new: Class, method: &Method) -> Option<bool
                 // Sat: some input follows both paths and the results differ.
                 z3::SatResult::Sat => {
                     let model = s.get_model().unwrap();
-                    let input = next_input(&model, &old_input);
+                    let input = next_input(&model, &old_input1);
                     let (_, _, old_res) = interpreter_old.interpret(method, input.clone(), 1000);
                     let (_, _, new_res) = interpreter_new.interpret(method, input.clone(), 1000);
                     if matches!(old_res, ExeResult::DidNotFinish)
@@ -192,7 +225,7 @@ fn are_equiv(class_old: Class, class_new: Class, method: &Method) -> Option<bool
                 // Sat: some input follows both paths and the results differ.
                 z3::SatResult::Sat => {
                     let model = s.get_model().unwrap();
-                    let input = next_input(&model, &old_input);
+                    let input = next_input(&model, &old_input1);
                     let (_, _, old_res) = interpreter_old.interpret(method, input.clone(), 1000);
                     let (_, _, new_res) = interpreter_new.interpret(method, input, 1000);
                     if old_res != new_res {
