@@ -4,8 +4,8 @@ use eqbench::{
     case::CaseId,
     desc::{DESC_FILE, Desc},
 };
-use interpreter::{Class, ConcolicExecutor, ExeResult, FromJson, Method};
-use z3::{Solver, ast::Bool};
+use interpreter::{Class, ConcolicExecutor, ExeResult, FromJson, Interpreter, Method, next_input};
+use z3::{Params, Solver, ast::Bool};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -114,12 +114,14 @@ fn class_from_path(path: &str, main: &str) -> Class {
 }
 
 fn are_equiv(class_old: Class, class_new: Class, method: &Method) -> Option<bool> {
-    let conc_old = ConcolicExecutor::new(class_old);
-    let conc_new = ConcolicExecutor::new(class_new);
+    let conc_old = ConcolicExecutor::new(class_old.clone());
+    let conc_new = ConcolicExecutor::new(class_new.clone());
+    let interpreter_new = Interpreter::new(class_new);
+    let interpreter_old = Interpreter::new(class_old);
     let res_old = conc_old.run(method, 1000, 20);
     let res_new = conc_new.run(method, 1000, 20);
 
-    for (_, p1, r1) in res_old {
+    for (old_input, p1, r1) in res_old {
         for (_, p2, r2) in &res_new {
             if r1 == *r2 {
                 continue;
@@ -134,6 +136,38 @@ fn are_equiv(class_old: Class, class_new: Class, method: &Method) -> Option<bool
             }
             for c in p2 {
                 s.assert(c);
+            }
+            let check_res = s.check();
+            match check_res {
+                // Sat: some input follows both paths and the results differ.
+                z3::SatResult::Sat => {
+                    let model = s.get_model().unwrap();
+                    let input = next_input(&model, &old_input);
+                    let (_, _, old_res) = interpreter_old.interpret(method, input.clone(), 1000);
+                    let (_, _, new_res) = interpreter_new.interpret(method, input.clone(), 1000);
+                    if matches!(old_res, ExeResult::DidNotFinish)
+                        || matches!(new_res, ExeResult::DidNotFinish)
+                    {
+                    } else if old_res != new_res
+                        && let ExeResult::Ok(output1) = old_res
+                            && let ExeResult::Ok(output2) = new_res
+                        {
+                            match (output1, output2) {
+                                (None, None) => (),
+                                (Some(o1), Some(o2)) => {
+                                    if !o1.0.are_concrete_equal(&o2.0) {
+                                        eprintln!("{:?}", input);
+                                        eprintln!("{:?}, {:?}", o1.0, o2.0);
+
+                                        return Some(false);
+                                    }
+                                }
+                                _ => return Some(false),
+                            }
+                        }
+                }
+                z3::SatResult::Unknown => return None,
+                z3::SatResult::Unsat => {}
             }
             if let ExeResult::Ok(Some(out1)) = &r1
                 && let ExeResult::Ok(Some(out2)) = r2
@@ -153,7 +187,34 @@ fn are_equiv(class_old: Class, class_new: Class, method: &Method) -> Option<bool
             let check_res = s.check();
             match check_res {
                 // Sat: some input follows both paths and the results differ.
-                z3::SatResult::Sat => return Some(false),
+                z3::SatResult::Sat => {
+                    let model = s.get_model().unwrap();
+                    let input = next_input(&model, &old_input);
+                    let (_, _, old_res) = interpreter_old.interpret(method, input.clone(), 1000);
+                    let (_, _, new_res) = interpreter_new.interpret(method, input, 1000);
+                    if old_res != new_res {
+                        if let ExeResult::Ok(output1) = old_res
+                            && let ExeResult::Ok(output2) = new_res
+                        {
+                            match (output1, output2) {
+                                (None, None) => panic!(),
+                                (Some(o1), Some(o2)) => {
+                                    if !o1.0.are_concrete_equal(&o2.0) {
+                                        eprintln!("{:?}, {:?}", o1.0, o2.0);
+                                        return Some(false);
+                                    } else {
+                                        panic!()
+                                    }
+                                }
+                                _ => return Some(false),
+                            }
+                        } else {
+                            return Some(false);
+                        }
+                    } else {
+                        panic!()
+                    }
+                }
                 z3::SatResult::Unknown => return None,
                 z3::SatResult::Unsat => {}
             }

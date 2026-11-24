@@ -190,6 +190,21 @@ impl StackValue {
             _ => panic!("Cannot perform min on these types!"),
         }
     }
+
+    pub fn are_concrete_equal(&self, other: &Self) -> bool {
+        match (self, other) {
+            (StackValue::Int(i1, _), StackValue::Int(i2, _)) => *i1 == *i2,
+            (StackValue::Long(i1, _), StackValue::Long(i2, _)) => *i1 == *i2,
+            (StackValue::Ref(r1, ..), StackValue::Ref(r2, ..)) => match (r1, r2) {
+                (None, None) => true,
+                (Some(_), Some(_)) => todo!(),
+                _ => false,
+            },
+            (StackValue::Float(f1, _), StackValue::Float(f2, _)) => *f1 == *f2,
+            (StackValue::Double(f1, _), StackValue::Double(f2, _)) => *f1 == *f2,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
