@@ -34,7 +34,7 @@ this repository (`target/release/prog-equiv`). The records are in
 | Tool | Correct | F1 | eq precision / recall | neq precision / recall | unknown | timeout | memory out | error | Mean time | Max memory |
 |---|---|---|---|---|---|---|---|---|---|---|
 | JBMC | 86/248 | 0.494 | 1.000 / 0.207 | 0.866 / 0.513 | 145 | 1 | 7 | 0 | 109.0 s | 2182 MiB |
-| Jazzer | 82/248 | 0.394 | - / 0.000 | 0.863 / 0.726 | 144 | 4 | 5 | 0 | 139.6 s | 2444 MiB |
+| Jazzer | 82/248 | 0.394 | - / 0.000 | 0.863 / 0.726 | 153 | 0 | 0 | 0 | 139.5 s | 944 MiB |
 | Java Ranger | 73/248 | 0.448 | 0.974 / 0.274 | 0.878 / 0.319 | 165 | 0 | 4 | 0 | 130.9 s | 2079 MiB |
 | PASDA | 60/248 | 0.392 | 0.960 / 0.178 | 1.000 / 0.319 | 187 | 0 | 0 | 0 | 68.4 s | 1795 MiB |
 | PRV | 55/248 | 0.365 | 0.958 / 0.170 | 1.000 / 0.283 | 192 | 0 | 0 | 0 | 64.8 s | 1721 MiB |
@@ -93,12 +93,17 @@ larger limit, so one run at 300 s gives every limit below it.
   e.g. CLEVER's `main` (index out of bounds at `interpreter/src/state.rs:106`),
   and `double` parameters (`method argument type not implemented` at
   `interpreter/src/concolic_exec.rs:33`).
-- **Memory**: Jazzer needs about 700 MiB per pair (a JVM and libFuzzer); 2 GiB
-  stops ARDiff on 11 pairs, JBMC on 7. Peaks are sampled every 250 ms, a little
-  above the limit before the tool is stopped.
+- **Memory**: Jazzer needs about 700 MiB per pair (a JVM and libFuzzer), at most
+  944 MiB; 2 GiB stops ARDiff on 11 pairs, JBMC on 7. Peaks are sampled every
+  250 ms, a little above the limit before the tool is stopped.
 - After the JBMC adapter started to confirm counterexamples on the JVM and the
   miter to skip stack overflows, JBMC was run again in full, Java Ranger and
   Jazzer on the pairs they had answered `neq`: their other answers cannot change.
+- Jazzer was run again on the 44 pairs whose versions print, e.g. an error
+  message in gam-factln: its adapter held their output in memory, millions of
+  lines, and timed out on 4 of them and went over 2 GiB on 5. It now drops what
+  the versions print; the same 10 of them are answered `neq`, the others
+  `unknown`.
 
 ### `Eq` pairs that differ on the JVM
 
