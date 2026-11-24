@@ -61,11 +61,14 @@ def fuzz(classes: Path, target: Path, deadline: float) -> tuple[str, str]:
             f"-artifact_prefix={tmp}/",
         ]
         try:
-            done = subprocess.run(command, cwd=tmp, capture_output=True, text=True,
-                                  timeout=max(1.0, deadline - time.monotonic()))
+            # Only stderr is kept: Jazzer reports there. stdout gets what the versions
+            # print, millions of lines on the pairs printing an error message (170 MB
+            # in 20 s for gam-factln), which would be held in memory.
+            done = subprocess.run(command, cwd=tmp, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                                  text=True, timeout=max(1.0, deadline - time.monotonic()))
         except subprocess.TimeoutExpired:
             return "unknown", "out of time"
-    output = done.stdout + done.stderr
+    output = done.stderr
     if "java.lang.AssertionError" in output:
         # Thrown by EqbenchFuzzTarget with the inputs.
         witness = re.search(r"the versions differ on \[.*?\]$", output, re.M)
