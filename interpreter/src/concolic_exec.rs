@@ -7,6 +7,7 @@ use crate::*;
 
 pub type Run = ((Vec<StackValue>, Heap), Vec<z3::ast::Bool>, ExeResult);
 pub const SOLVER_TIMEOUT_MS: u32 = 100;
+#[derive(Debug, Clone)]
 pub struct ConcolicExecutor {
     interpreter: Interpreter,
 }
@@ -19,41 +20,7 @@ impl ConcolicExecutor {
     }
 
     pub fn run(&self, method: &Method, iter: u32, max_runs: u32) -> Vec<Run> {
-        let mut output: Vec<Run> = Vec::new();
-        let mut params = Params::new();
-        params.set_u32("timeout", SOLVER_TIMEOUT_MS);
-        // The first concrete input is all zeros, with one named symbolic variable per
-        // parameter (see `initial_input`).
-        let initial_input = self.initial_input(method).unwrap_or_else(|e| panic!("{e}"));
-        let mut input_stack = vec![(initial_input, 0)];
-
-        // run interpreter
-        while let Some((input, depth)) = input_stack.pop() {
-            if output.len() as u32 >= max_runs {
-                break;
-            }
-            let (_, path, res) = self.interpreter.interpret(method, input.clone(), iter);
-
-            // Negate every condition from some depth n
-            for i in depth..path.len() {
-                let s = Solver::new();
-                s.set_params(&params);
-                // Keep the path the same until the negated condition
-                for c in &path[..i] {
-                    s.assert(c);
-                }
-                s.assert(path[i].not());
-
-                if s.check() == SatResult::Sat {
-                    let model = s.get_model().unwrap();
-                    input_stack.push((next_input(&model, &input), i + 1));
-                }
-            }
-
-            output.push((input, path, res));
-        }
-
-        output
+        self.clone().into_iter(method, iter).take(max_runs as usize).collect()
     }
 
     pub fn initial_input(&self, method: &Method) -> Result<(Vec<StackValue>, Heap), String> {
@@ -89,7 +56,70 @@ impl ConcolicExecutor {
         }
         Ok((args, Heap { heap }))
     }
+
+    pub fn into_iter(self, method: &Method, step_count: u32) -> impl Iterator<Item = Run> {
+        let initial_input = self.initial_input(method).unwrap();
+        let mut params = Params::new();
+        params.set_u32("timeout", SOLVER_TIMEOUT_MS);
+        ConcolicPathsIter {
+            initial_input,
+            paths_to_explore: vec![vec![]],
+            interpreter: self.interpreter,
+            method: method.clone(),
+            params,
+            step_count,
+        }
+    }
 }
+
+type Path = Vec<Bool>;
+type Input = (Vec<StackValue>, Heap);
+
+struct ConcolicPathsIter {
+    initial_input: Input,
+    paths_to_explore: Vec<Path>,
+    interpreter: Interpreter,
+    method: Method,
+    params: Params,
+    step_count: u32,
+}
+
+impl ConcolicPathsIter {
+    fn next_input(&mut self) -> Option<(Input, usize)> {loop {
+            let solver =  Solver::new();
+            solver.set_params(&self.params);
+            let path = self.paths_to_explore.pop()?;
+            for c in &path {
+                solver.assert(c);
+            }
+            if solver.check() == SatResult::Sat {
+                let model = solver.get_model().unwrap();
+                return Some((next_input(&model, &self.initial_input), path.len()))
+            }
+        }
+    }
+}
+
+impl Iterator for ConcolicPathsIter {
+    type Item = Run;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (input, depth) = self.next_input()?;
+        let (_,path,r) = self.interpreter.interpret(&self.method, input.clone(), self.step_count);
+        // Negate every condition from some depth n
+        for i in depth..path.len() {
+            let mut new_path = Vec::with_capacity(i + 1);
+            // Keep the path the same until the negated condition
+            for c in &path[..i] {
+                new_path.push(c.clone());
+            }
+            new_path.push(path[i].not());
+            self.paths_to_explore.push(new_path);
+        }
+        return Some((input, path, r))
+    }
+}
+
 
 /// The same input, but with the values the model assigns to the symbolic variables.
 pub fn next_input(model: &Model, old_input: &(Vec<StackValue>, Heap)) -> (Vec<StackValue>, Heap) {

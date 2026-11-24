@@ -6,6 +6,8 @@ use crate::{
     state::ExeResult::{AssertErr, DidNotFinish, Div0, NullPointer, Ok, OutOfBounds},
     *,
 };
+
+#[derive(Debug, Clone)]
 pub struct Interpreter {
     class: Class,
 }
