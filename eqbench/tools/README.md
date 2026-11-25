@@ -131,13 +131,13 @@ The same 248 pairs at 1800 s per pair, at most 2 GiB per tool, 6 pairs at a
 time, 4 for JBMC and Java Ranger: 6 of them at 2 GiB do not fit in 16 GB.
 `prog-equiv` is the version of master, 6abae1f, not the one of the table at
 300 s; run apart at 300 s, 3 pairs at a time, it gets 115 pairs right. The
-tools are added as their runs end; the plots are made by
-`just eqbench-plot eqbench/results/*-1800.jsonl`.
+plots are made by `just eqbench-plot eqbench/results/*-1800.jsonl`.
 
 | Tool | Correct | F1 | eq precision / recall | neq precision / recall | unknown | timeout | memory out | error | Mean time | Max memory |
 |---|---|---|---|---|---|---|---|---|---|---|
 | prog-equiv | 121/248 | 0.621 | 0.899 / 0.526 | 0.833 / 0.442 | 0 | 52 | 16 | 41 | 425.5 s | 2417 MiB |
 | JBMC | 88/248 | 0.501 | 1.000 / 0.215 | 0.855 / 0.522 | 93 | 0 | 57 | 0 | 281.6 s | 2591 MiB |
+| Jazzer | 85/248 | 0.403 | - / 0.000 | 0.867 / 0.752 | 150 | 0 | 0 | 0 | 813.7 s | 945 MiB |
 | Java Ranger | 76/248 | 0.462 | 0.975 / 0.289 | 0.881 / 0.327 | 143 | 0 | 23 | 0 | 534.8 s | 2207 MiB |
 | PASDA | 66/248 | 0.422 | 0.964 / 0.200 | 1.000 / 0.345 | 177 | 3 | 1 | 0 | 290.4 s | 2088 MiB |
 | PRV | 60/248 | 0.392 | 0.960 / 0.178 | 1.000 / 0.319 | 187 | 0 | 0 | 0 | 297.6 s | 2007 MiB |
@@ -173,8 +173,8 @@ tools are added as their runs end; the plots are made by
   and 2.7 for PRV. An answer after 300 s here does not show that 300 s is too
   short: of the 11 PASDA gives, it gave 5 within 300 s in the run at 300 s, PRV
   3 of its 8. JBMC and Java Ranger, 4 pairs at a time once the machine had
-  memory to spare, took 0.68 and 0.44 times as long as at 300 s: the series at
-  300 s was short of memory too.
+  memory to spare, took 0.68 and 0.44 times as long as at 300 s, and Jazzer
+  0.64: the series at 300 s was short of memory too.
 - **A larger timeout answers a few more pairs**, and loses one:
   - PASDA gets 6 more right than at 300 s, between 509 and 1515 s:
     ell-plgndr-Eq, gam-expint-Neq and both pairs of ran-ranone and of
@@ -192,6 +192,10 @@ tools are added as their runs end; the plots are made by
     CLEVER-is_prime3-Eq and ell-rf-Neq. It loses bess-bessk1-Neq, answered in
     152 s at 300 s, which goes over 2 GiB in 31 s. Its one new wrong answer,
     `neq` on CLEVER-is_prime2-Eq at 1320 s, is one of the 13 `Eq` pairs that
+    differ on the JVM.
+  - Jazzer gets 3 more: REVE-ackermann-Neq at 1769 s, and bess-bessi-Neq and
+    ran-bnldev-Neq within 3 s, which it missed at 300 s since its inputs are
+    random. Its 13 wrong answers are the same, `neq` on the 13 `Eq` pairs that
     differ on the JVM.
   - DSE gets the same 34 right. No other tool gives a new wrong answer.
 - **ARDiff** gets as many right (49). It is given the time left (`--t`), and
@@ -216,7 +220,6 @@ tools are added as their runs end; the plots are made by
   `interpreter/src/interpreter.rs:195`), classes other than `oldV` / `newV`
   (14), a class without a constructor without parameters (2) and an `int[]`
   parameter (1).
-- **To come**: Jazzer, 6 pairs at a time.
 
 ## Shortlist
 
