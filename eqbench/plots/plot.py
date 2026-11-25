@@ -28,7 +28,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
-from matplotlib.colors import LinearSegmentedColormap  # noqa: E402
+from matplotlib.colors import LinearSegmentedColormap, to_rgb  # noqa: E402
 from matplotlib.ticker import MaxNLocator  # noqa: E402
 
 # Tools in their fixed categorical slot: a tool keeps its color in every plot.
@@ -168,6 +168,8 @@ def assign_colors(runs: list[Run]) -> dict[str, int] | None:
 def style(theme: dict) -> dict:
     return {
         "svg.fonttype": "none",
+        # Fixed ids, with no date below: the same results give the same files.
+        "svg.hashsalt": "eqbench",
         "font.family": ["Helvetica Neue", "Helvetica", "Arial", "DejaVu Sans"],
         "font.size": 10,
         "figure.facecolor": theme["surface"],
@@ -194,7 +196,7 @@ def style(theme: dict) -> dict:
 
 
 def save(fig, path: Path, theme: dict) -> None:
-    fig.savefig(path, facecolor=theme["surface"], bbox_inches="tight", pad_inches=0.15)
+    fig.savefig(path, facecolor=theme["surface"], bbox_inches="tight", pad_inches=0.15, metadata={"Date": None})
     plt.close(fig)
 
 
@@ -308,8 +310,7 @@ def quality(runs: list[Run], theme: dict):
             fill = color or theme[role]
             ax.barh(row, n, left=left, color=fill, edgecolor=theme["surface"], linewidth=2, height=0.62)
             if n >= 9:
-                ink = "#0b0b0b" if state == "timeout" else "#ffffff"
-                ax.text(left + n / 2, row, str(n), ha="center", va="center", color=ink, fontsize=9)
+                ax.text(left + n / 2, row, str(n), ha="center", va="center", color=ink_on(fill), fontsize=9)
             left += n
     ax.set_yticks(range(len(ordered)), [r.label for r in ordered])
     ax.set_xlim(0, max(len(r.records) for r in runs))
@@ -374,8 +375,8 @@ def benchmarks(runs: list[Run], theme: dict):
             correct = sum(r.state == "correct" for r in cases)
             share = correct / len(cases) if cases else 0
             ax.add_patch(plt.Rectangle((col, row), 1, 1, color=cmap(share), ec=theme["surface"], lw=2))
-            ink = "#ffffff" if luminance(cmap(share)) < 0.45 else "#0b0b0b"
-            ax.text(col + 0.5, row + 0.5, f"{correct}/{len(cases)}", ha="center", va="center", color=ink, fontsize=8)
+            ax.text(col + 0.5, row + 0.5, f"{correct}/{len(cases)}", ha="center", va="center",
+                    color=ink_on(cmap(share)), fontsize=8)
     ax.set_xlim(0, len(runs))
     ax.set_ylim(len(benches), 0)
     ax.set_xticks([c + 0.5 for c in range(len(runs))], [r.label for r in runs])
@@ -391,9 +392,15 @@ def benchmarks(runs: list[Run], theme: dict):
     return fig
 
 
-def luminance(rgba) -> float:
-    r, g, b = (c if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in rgba[:3])
+def luminance(color) -> float:
+    r, g, b = (c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in to_rgb(color))
     return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def ink_on(fill) -> str:
+    """Black or white, whichever contrasts more with `fill`."""
+    lum = luminance(fill)
+    return "#ffffff" if (1.05 / (lum + 0.05)) > ((lum + 0.05) / 0.05) else "#0b0b0b"
 
 
 def summary(runs: list[Run]) -> str:
