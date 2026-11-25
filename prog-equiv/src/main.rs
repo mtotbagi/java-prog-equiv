@@ -194,7 +194,7 @@ fn are_equiv(
     }
     // The time is up, and we haven't seen any neq cases, guess eq
     // Arguably we should return unkown, but then we could return unkown even if we hit a didnotfinish run
-    return if unknown { None } else { Some(true) };
+    if unknown { None } else { Some(true) }
 }
 
 struct Checker<'a> {
