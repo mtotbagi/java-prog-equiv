@@ -19,13 +19,6 @@ impl ConcolicExecutor {
         }
     }
 
-    pub fn run(&self, method: &Method, iter: u32, max_runs: u32) -> Vec<Run> {
-        self.clone()
-            .into_iter(method, iter)
-            .take(max_runs as usize)
-            .collect()
-    }
-
     pub fn initial_input(&self, method: &Method) -> Result<(Vec<StackValue>, Heap), String> {
         let mut args = Vec::new();
         let mut heap = Vec::new();
