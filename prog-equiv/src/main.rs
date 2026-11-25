@@ -15,8 +15,22 @@ fn main() {
         eprintln!("usage: {} <old> <new>", args[0]);
         std::process::exit(2);
     }
-    let class_old = class_from_path(&args[1], "oldV");
-    let class_new = class_from_path(&args[2], "newV");
+
+    let verdict = run(&args);
+    match verdict {
+        Some(true) => println!("eq"),
+        Some(false) => println!("neq"),
+        None => println!("unknown"),
+    }
+}
+
+fn run(args: &[String]) -> Option<bool> {
+    let (Ok(class_old), Ok(class_new)) = (
+        class_from_path(&args[1], "oldV"),
+        class_from_path(&args[2], "newV"),
+    ) else {
+        return None;
+    };
 
     let desc = case_desc(&args[1]);
     // `program name` is `<class>.<entry>` when the changed method (`method name`)
@@ -42,11 +56,7 @@ fn main() {
         }
     };
 
-    match are_equiv(class_old.clone(), class_new.clone(), method) {
-        Some(true) => println!("eq"),
-        Some(false) => println!("neq"),
-        None => println!("unknown"),
-    }
+    are_equiv(class_old.clone(), class_new.clone(), method)
 }
 
 /// Description of the case, read from its `J-Desc.json`.
@@ -83,33 +93,26 @@ fn case_desc(version_dir: &str) -> Desc {
 
 /// Loads a class from a JSON file, or from a directory (as given by `eqbench analyse`):
 /// `<dir>/<main>.json`, or the only JSON file in the directory.
-fn class_from_path(path: &str, main: &str) -> Class {
+fn class_from_path(path: &str, main: &str) -> Result<Class, ()> {
     let path = Path::new(path);
     let file_path = if path.is_dir() {
-        let main_file = path.join(format!("{main}.json"));
-        if main_file.is_file() {
-            main_file
-        } else {
             let jsons: Vec<_> = std::fs::read_dir(path)
-                .unwrap()
+            .map_err(|_| ())?
                 .filter_map(|e| e.ok().map(|e| e.path()))
                 .filter(|p| p.extension().is_some_and(|e| e == "json"))
                 .collect();
+        let main_file = path.join(format!("{main}.json"));
             match jsons.as_slice() {
+            [_] if main_file.is_file() => main_file,
                 [only] => only.clone(),
-                _ => panic!(
-                    "{}: no {main}.json and {} JSON files, multi-class programs are not supported",
-                    path.display(),
-                    jsons.len()
-                ),
-            }
+            _ => return Err(()),
         }
     } else {
         path.to_path_buf()
     };
-    let file = File::open(&file_path).unwrap();
-    let json = serde_json::from_reader(BufReader::new(file)).unwrap();
-    Class::from_json(&json)
+    let file = File::open(&file_path).map_err(|_| ())?;
+    let json = serde_json::from_reader(BufReader::new(file)).map_err(|_| ())?;
+    Ok(Class::from_json(&json))
 }
 
 fn are_equiv(class_old: Class, class_new: Class, method: &Method) -> Option<bool> {
