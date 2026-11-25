@@ -4,7 +4,9 @@ use eqbench::{
     case::CaseId,
     desc::{DESC_FILE, Desc},
 };
-use interpreter::{Class, ConcolicExecutor, ExeResult, FromJson, Interpreter, Method, next_input};
+use interpreter::{
+    Class, ConcolicExecutor, ExeResult, FromJson, Interpreter, Method, Run, next_input,
+};
 use z3::{Params, Solver, ast::Bool};
 
 fn main() {
@@ -96,15 +98,15 @@ fn case_desc(version_dir: &str) -> Desc {
 fn class_from_path(path: &str, main: &str) -> Result<Class, ()> {
     let path = Path::new(path);
     let file_path = if path.is_dir() {
-            let jsons: Vec<_> = std::fs::read_dir(path)
+        let jsons: Vec<_> = std::fs::read_dir(path)
             .map_err(|_| ())?
-                .filter_map(|e| e.ok().map(|e| e.path()))
-                .filter(|p| p.extension().is_some_and(|e| e == "json"))
-                .collect();
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|e| e == "json"))
+            .collect();
         let main_file = path.join(format!("{main}.json"));
-            match jsons.as_slice() {
+        match jsons.as_slice() {
             [_] if main_file.is_file() => main_file,
-                [only] => only.clone(),
+            [only] => only.clone(),
             _ => return Err(()),
         }
     } else {
@@ -126,138 +128,160 @@ fn are_equiv(class_old: Class, class_new: Class, method: &Method) -> Option<bool
     let res_old = conc_old.run(method, 1000, 20);
     let res_new = conc_new.run(method, 1000, 20);
     let mut is_unkown = false;
-    for (old_input1, p1, r1) in res_old {
-        for (old_input2, p2, r2) in &res_new {
-            if r1 == *r2 {
-                continue;
-            }
-
-            // for Ok results it's enough to check if the symbolic values are equal
-            if let ExeResult::Ok(Some((ref o1, _))) = r1
-                && let ExeResult::Ok(Some((o2, _))) = r2
-                && o1.are_symbolic_equal(o2)
-            {
-                continue;
-            }
-
-            // If any of the traces are unfinished, we don't use them as evidence
-            if matches!(r1, ExeResult::DidNotFinish) || matches!(r2, ExeResult::DidNotFinish) {
-                continue;
-            }
-
-            // if for both cases we use the same concrete value we as inputs we can save some time
-            let (ref params1, _) = old_input1;
-            let (params2, _) = old_input2;
-            let inputs_eq = params1.iter().zip(params2).fold(true, |acc, (p1, p2)| {
-                // non-static methods they get the reference to the object calling as an input
-                if p1.is_ref() && p2.is_ref() && p1 == p2 {
-                    acc
-                } else {
-                    acc && p1.are_concrete_equal(p2)
-                }
-            });
-            if inputs_eq {
-                if let ExeResult::Ok(Some((ref o1, _))) = r1
-                    && let ExeResult::Ok(Some((o2, _))) = r2
-                    && o1.are_concrete_equal(o2)
-                {
-                    continue;
-                } else {
-                    // in all other cases the outputs are not equal since they were checked above
-                    return Some(false);
-                }
-            }
-
-            let s = Solver::new();
-            s.set_params(&params);
-            for c in &p1 {
-                s.assert(c);
-            }
-            for c in p2 {
-                s.assert(c);
-            }
-            let check_res = s.check();
-            match check_res {
-                // Sat: some input follows both paths and the results differ.
-                z3::SatResult::Sat => {
-                    let model = s.get_model().unwrap();
-                    let input = next_input(&model, &old_input1);
-                    let (_, _, old_res) = interpreter_old.interpret(method, input.clone(), 1000);
-                    let (_, _, new_res) = interpreter_new.interpret(method, input.clone(), 1000);
-                    if matches!(old_res, ExeResult::DidNotFinish)
-                        || matches!(new_res, ExeResult::DidNotFinish)
-                    {
-                    } else if old_res != new_res
-                        && let ExeResult::Ok(output1) = old_res
-                        && let ExeResult::Ok(output2) = new_res
-                    {
-                        match (output1, output2) {
-                            (None, None) => (),
-                            (Some(o1), Some(o2)) => {
-                                if !o1.0.are_concrete_equal(&o2.0) {
-                                    eprintln!("{:?}", input);
-                                    eprintln!("{:?}, {:?}", o1.0, o2.0);
-
-                                    return Some(false);
-                                }
-                            }
-                            _ => return Some(false),
-                        }
-                    }
-                }
-                z3::SatResult::Unknown => is_unkown = true,
-                z3::SatResult::Unsat => {}
-            }
-            if let ExeResult::Ok(Some(out1)) = &r1
-                && let ExeResult::Ok(Some(out2)) = r2
-            {
-                // TODO We need to put some thought into whether this is the correct equivalence of output (does reference change matter? prob no)
-                let sym_out1 = out1.0.symbolic_values(&out1.1);
-                let sym_out2 = out2.0.symbolic_values(&out2.1);
-                if sym_out1.len() == sym_out2.len() {
-                    let sym_bools: Box<_> = sym_out1
-                        .iter()
-                        .zip(sym_out2.iter())
-                        .map(|(d1, d2)| d1.eq(d2))
-                        .collect();
-                    s.assert(Bool::and(&sym_bools).not());
-                }
-            }
-            let check_res = s.check();
-            match check_res {
-                // Sat: some input follows both paths and the results differ.
-                z3::SatResult::Sat => {
-                    let model = s.get_model().unwrap();
-                    let input = next_input(&model, &old_input1);
-                    let (_, _, old_res) = interpreter_old.interpret(method, input.clone(), 1000);
-                    let (_, _, new_res) = interpreter_new.interpret(method, input, 1000);
-                    if old_res != new_res {
-                        if let ExeResult::Ok(output1) = old_res
-                            && let ExeResult::Ok(output2) = new_res
-                        {
-                            match (output1, output2) {
-                                (None, None) => panic!(),
-                                (Some(o1), Some(o2)) => {
-                                    if !o1.0.are_concrete_equal(&o2.0) {
-                                        eprintln!("{:?}, {:?}", o1.0, o2.0);
-                                        return Some(false);
-                                    } else {
-                                        panic!()
-                                    }
-                                }
-                                _ => return Some(false),
-                            }
-                        } else {
-                            return Some(false);
-                        }
-                    } else {
-                        panic!()
-                    }
-                }
-                z3::SatResult::Unknown => is_unkown = true,
-                z3::SatResult::Unsat => {}
+    let checker = Checker {
+        old_interp: &interpreter_old,
+        new_interp: &interpreter_new,
+        method,
+        params: &params,
+    };
+    for res1 in &res_old {
+        for res2 in &res_new {
+            match checker.check_case(res1, res2) {
+                Some(true) => (),
+                Some(false) => return Some(false),
+                None => is_unkown = true,
             }
         }
     }
     if is_unkown { None } else { Some(true) }
+}
+
+struct Checker<'a> {
+    old_interp: &'a Interpreter,
+    new_interp: &'a Interpreter,
+    method: &'a Method,
+    params: &'a Params,
+}
+impl<'a> Checker<'a> {
+    fn check_case(&self, (old_input1, p1, r1): &Run, (old_input2, p2, r2): &Run) -> Option<bool> {
+        if *r1 == *r2 {
+            return Some(true);
+        }
+
+        // for Ok results it's enough to check if the symbolic values are equal
+        if let ExeResult::Ok(Some((o1, _))) = r1
+            && let ExeResult::Ok(Some((o2, _))) = r2
+            && o1.are_symbolic_equal(o2)
+        {
+            return Some(true);
+        }
+
+        // If any of the traces are unfinished, we don't use them as evidence
+        if matches!(r1, ExeResult::DidNotFinish) || matches!(r2, ExeResult::DidNotFinish) {
+            return Some(true);
+        }
+
+        // if for both cases we use the same concrete value we as inputs we can save some time
+        let (params1, _) = old_input1;
+        let (params2, _) = old_input2;
+        let inputs_eq = params1.iter().zip(params2).fold(true, |acc, (p1, p2)| {
+            // non-static methods they get the reference to the object calling as an input
+            if p1.is_ref() && p2.is_ref() && p1 == p2 {
+                acc
+            } else {
+                acc && p1.are_concrete_equal(p2)
+            }
+        });
+        if inputs_eq {
+            if let ExeResult::Ok(Some((o1, _))) = r1
+                && let ExeResult::Ok(Some((o2, _))) = r2
+                && o1.are_concrete_equal(o2)
+            {
+                return Some(true);
+            } else {
+                // in all other cases the outputs are not equal since they were checked above
+                return Some(false);
+            }
+        }
+
+        let s = Solver::new();
+        s.set_params(self.params);
+        for c in p1 {
+            s.assert(c);
+        }
+        for c in p2 {
+            s.assert(c);
+        }
+        let check_res = s.check();
+        match check_res {
+            // Sat: some input follows both paths and the results differ.
+            z3::SatResult::Sat => {
+                let model = s.get_model().unwrap();
+                let input = next_input(&model, old_input1);
+                let (_, _, old_res) = self.old_interp.interpret(self.method, input.clone(), 1000);
+                let (_, _, new_res) = self.new_interp.interpret(self.method, input.clone(), 1000);
+                if matches!(old_res, ExeResult::DidNotFinish)
+                    || matches!(new_res, ExeResult::DidNotFinish)
+                {
+                } else if old_res != new_res
+                    && let ExeResult::Ok(output1) = old_res
+                    && let ExeResult::Ok(output2) = new_res
+                {
+                    match (output1, output2) {
+                        (None, None) => (),
+                        (Some(o1), Some(o2)) => {
+                            if !o1.0.are_concrete_equal(&o2.0) {
+                                eprintln!("{:?}", input);
+                                eprintln!("{:?}, {:?}", o1.0, o2.0);
+
+                                return Some(false);
+                            }
+                        }
+                        _ => return Some(false),
+                    }
+                }
+            }
+            z3::SatResult::Unknown => return None,
+            z3::SatResult::Unsat => return Some(true),
+        }
+        if let ExeResult::Ok(Some(out1)) = &r1
+            && let ExeResult::Ok(Some(out2)) = r2
+        {
+            // TODO We need to put some thought into whether this is the correct equivalence of output (does reference change matter? prob no)
+            let sym_out1 = out1.0.symbolic_values(&out1.1);
+            let sym_out2 = out2.0.symbolic_values(&out2.1);
+            if sym_out1.len() == sym_out2.len() {
+                let sym_bools: Box<_> = sym_out1
+                    .iter()
+                    .zip(sym_out2.iter())
+                    .map(|(d1, d2)| d1.eq(d2))
+                    .collect();
+                s.assert(Bool::and(&sym_bools).not());
+            }
+        }
+        let check_res = s.check();
+        match check_res {
+            // Sat: some input follows both paths and the results differ.
+            z3::SatResult::Sat => {
+                let model = s.get_model().unwrap();
+                let input = next_input(&model, old_input1);
+                let (_, _, old_res) = self.old_interp.interpret(self.method, input.clone(), 1000);
+                let (_, _, new_res) = self.new_interp.interpret(self.method, input, 1000);
+                if old_res != new_res {
+                    if let ExeResult::Ok(output1) = old_res
+                        && let ExeResult::Ok(output2) = new_res
+                    {
+                        match (output1, output2) {
+                            (None, None) => panic!(),
+                            (Some(o1), Some(o2)) => {
+                                if !o1.0.are_concrete_equal(&o2.0) {
+                                    eprintln!("{:?}, {:?}", o1.0, o2.0);
+                                    Some(false)
+                                } else {
+                                    panic!()
+                                }
+                            }
+                            _ => Some(false),
+                        }
+                    } else {
+                        Some(false)
+                    }
+                } else {
+                    panic!()
+                }
+            }
+            z3::SatResult::Unknown => None,
+            z3::SatResult::Unsat => Some(true),
+        }
+    }
 }
