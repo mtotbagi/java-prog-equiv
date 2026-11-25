@@ -27,12 +27,14 @@ then runs the only program of its default package with the given arguments.
 
 The 248 pairs at 300 s per pair, 6 pairs at a time, at most 2 GiB per tool,
 on an Apple M1 Pro (8 cores, 16 GB). With them, `prog-equiv`, the analyser of
-this repository (`target/release/prog-equiv`). The records are in
+this repository (`target/release/prog-equiv`), at master 6abae1f and 3 pairs at
+a time. The records are in
 [`../results`](../results), one JSON line per pair; the plots are made by
 `just eqbench-plot eqbench/results/*-300.jsonl`.
 
 | Tool | Correct | F1 | eq precision / recall | neq precision / recall | unknown | timeout | memory out | error | Mean time | Max memory |
 |---|---|---|---|---|---|---|---|---|---|---|
+| prog-equiv | 115/248 | 0.596 | 0.897 / 0.519 | 0.818 / 0.398 | 0 | 60 | 14 | 41 | 81.6 s | 2274 MiB |
 | JBMC | 86/248 | 0.494 | 1.000 / 0.207 | 0.866 / 0.513 | 145 | 1 | 7 | 0 | 109.0 s | 2182 MiB |
 | Jazzer | 82/248 | 0.394 | - / 0.000 | 0.863 / 0.726 | 153 | 0 | 0 | 0 | 139.5 s | 944 MiB |
 | Java Ranger | 73/248 | 0.448 | 0.974 / 0.274 | 0.878 / 0.319 | 165 | 0 | 4 | 0 | 130.9 s | 2079 MiB |
@@ -41,7 +43,6 @@ this repository (`target/release/prog-equiv`). The records are in
 | ARDiff | 49/248 | 0.327 | 0.966 / 0.207 | 1.000 / 0.186 | 186 | 1 | 11 | 0 | 43.9 s | 2205 MiB |
 | IMP-S | 38/248 | 0.258 | 0.875 / 0.104 | 0.750 / 0.212 | 200 | 0 | 0 | 0 | 51.7 s | 1664 MiB |
 | DSE | 34/248 | 0.241 | 1.000 / 0.141 | 1.000 / 0.133 | 212 | 1 | 1 | 0 | 24.1 s | 2228 MiB |
-| prog-equiv | 8/248 | 0.063 | 0.750 / 0.022 | 0.556 / 0.044 | 0 | 2 | 0 | 233 | 2.7 s | 518 MiB |
 
 Correct and wrong answers by time limit: a tool answers the same within any
 larger limit, so one run at 300 s gives every limit below it.
@@ -66,21 +67,24 @@ larger limit, so one run at 300 s gives every limit below it.
   <img alt="Share of the pairs analysed within a peak memory, per tool" src="../results/plots/memory-300.svg">
 </picture>
 
-- **147 of the 248 pairs** (60 `Eq`, 87 `Neq`) get a correct answer from at
-  least one tool; Jazzer is the only one right on 13 of them, Java Ranger on 5.
-  Nobody answers on ej_hash, frenel, raytrace and statcalc: `void` methods,
-  classes other than `oldV` / `newV` or without a constructor without
-  parameters, outside both the miter and PASDA's input format.
-- **The miter tools are the best and the fastest to answer**: JBMC answers most
-  of its pairs within a second, Jazzer finds its differences within 10 s. Only
-  they answer on CLEVER (JBMC 40, Java Ranger 41, Jazzer 20 of the 50 pairs),
-  whose changes are in a callee the PASDA family does not look into.
+- **174 of the 248 pairs** (87 `Eq`, 87 `Neq`) get a correct answer from at
+  least one tool, 146 without `prog-equiv`. `prog-equiv` is the only one right
+  on 28 of them, Jazzer on 13, Java Ranger on 4. Nobody answers on ej_hash,
+  frenel, raytrace and statcalc: `void` methods, classes other than `oldV` /
+  `newV` or without a constructor without parameters, outside both the miter
+  and PASDA's input format, and on which `prog-equiv` crashes.
+- **Of the other tools, the miter tools are the best and the fastest to
+  answer**: JBMC answers most of its pairs within a second, Jazzer finds its
+  differences within 10 s. Only they and `prog-equiv` (44) answer on CLEVER
+  (JBMC 40, Java Ranger 41, Jazzer 20 of the 50 pairs), whose changes are in a
+  callee the PASDA family does not look into.
 - **13 `Eq` pairs differ on the JVM** (below): integer overflows, NaN and
-  infinities, and two pairs that differ on small inputs. Every `neq` of JBMC and
-  Jazzer on an `Eq` pair is one of them, run on the JVM. They count as wrong
-  above, against EqBench's labels; counted as `Neq`, JBMC and Jazzer both have
-  95 correct answers and no wrong one, PASDA 57 and 4 (`eq` on airy-MAX,
-  dart-test and pow-test, and on `ran-ranzero-Neq`).
+  infinities, and two pairs that differ on small inputs. Every `neq` of JBMC,
+  Jazzer and `prog-equiv` on an `Eq` pair is one of them, run on the JVM. They
+  count as wrong above, against EqBench's labels; counted as `Neq`, JBMC and
+  Jazzer both have 95 correct answers and no wrong one, PASDA 57 and 4 (`eq` on
+  airy-MAX, dart-test and pow-test, and on `ran-ranzero-Neq`), `prog-equiv` 124
+  and 9 (its 8 wrong `eq` and `eq` on REVE-limit3-Eq).
 - **Java Ranger** misses NaN, its solver reasoning on doubles as reals, and an
   overflow: `eq` on airy-MAX, airy-Sign, bess-SIGN and CLEVER-multiple, a wrong
   `eq` on `sine-mysin-Neq`. Its `neq` on `CLEVER-is_prime3-Eq` has no witness on
@@ -89,13 +93,21 @@ larger limit, so one run at 300 s gives every limit below it.
   calls a changed method (all of CLEVER). The wrong `eq` on `ran-ranzero-Neq` is
   shared by PASDA, ARDiff, IMP-S and PRV. IMP-S answers `neq` on 7 `Eq` pairs
   where no other tool finds a difference.
-- **prog-equiv** crashes (exit 101) on 233 pairs: methods without parameters,
-  e.g. CLEVER's `main` (index out of bounds at `interpreter/src/state.rs:106`),
-  and `double` parameters (`method argument type not implemented` at
-  `interpreter/src/concolic_exec.rs:33`).
+- **`prog-equiv`** answers `eq` whenever it finds no difference among at most
+  20 paths of at most 1000 instructions per version, even when traces do not
+  finish. Its 42 `eq` after a complete exploration are all right, among them
+  CLEVER-is_prime3-Eq, bess-bessk1-Eq and ran-gammln-Eq, which no other tool
+  proves. 34 rest on unfinished traces: 8 are wrong, and 24 of the 28 pairs
+  only `prog-equiv` gets right are among them, mostly REVE. Its 55 `neq` all
+  come within 15 s and differ on the JVM; 10 of them are on the `Eq` pairs
+  above. It crashes (exit 101) on 41 pairs: `System.out` (24,
+  `interpreter/src/interpreter.rs:195`), classes other than `oldV` / `newV`
+  (14), a class without a constructor without parameters (2) and an `int[]`
+  parameter (1). Its 60 timeouts and 14 memory outs are spent in Z3, solving
+  over floating point for the next input.
 - **Memory**: Jazzer needs about 700 MiB per pair (a JVM and libFuzzer), at most
-  944 MiB; 2 GiB stops ARDiff on 11 pairs, JBMC on 7. Peaks are sampled every
-  250 ms, a little above the limit before the tool is stopped.
+  944 MiB; 2 GiB stops `prog-equiv` on 14 pairs, ARDiff on 11, JBMC on 7. Peaks
+  are sampled every 250 ms, a little above the limit before the tool is stopped.
 - After the JBMC adapter started to confirm counterexamples on the JVM and the
   miter to skip stack overflows, JBMC was run again in full, Java Ranger and
   Jazzer on the pairs they had answered `neq`: their other answers cannot change.
@@ -129,9 +141,8 @@ Each found by Jazzer or JBMC, then run on both versions.
 
 The same 248 pairs at 1800 s per pair, at most 2 GiB per tool, 6 pairs at a
 time, 4 for JBMC and Java Ranger: 6 of them at 2 GiB do not fit in 16 GB.
-`prog-equiv` is the version of master, 6abae1f, not the one of the table at
-300 s; run apart at 300 s, 3 pairs at a time, it gets 115 pairs right. The
-plots are made by `just eqbench-plot eqbench/results/*-1800.jsonl`.
+`prog-equiv` is the version of master, 6abae1f, as at 300 s. The plots are made
+by `just eqbench-plot eqbench/results/*-1800.jsonl`.
 
 | Tool | Correct | F1 | eq precision / recall | neq precision / recall | unknown | timeout | memory out | error | Mean time | Max memory |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -179,7 +190,7 @@ plots are made by `just eqbench-plot eqbench/results/*-1800.jsonl`.
   - PASDA gets 6 more right than at 300 s, between 509 and 1515 s:
     ell-plgndr-Eq, gam-expint-Neq and both pairs of ran-ranone and of
     tsafe-snippet.
-  - `prog-equiv` gets 6 more than master at 300 s, between 378 and 1781 s:
+  - `prog-equiv` gets 6 more than at 300 s, between 378 and 1781 s:
     REVE-loop-Eq, gam-ei-Neq and the `Neq` pairs of bess-bessj0, bessk0, bessk1
     and bessy0. It times out on 52 pairs instead of 60.
   - PRV gets 5 more, between 379 and 1074 s: gam-gser-Neq, ran-gamdev-Neq,
@@ -213,13 +224,8 @@ plots are made by `just eqbench-plot eqbench/results/*-1800.jsonl`.
 - **Memory**: the peaks, and the 2 GiB limit, are on resident memory, which
   leaves out what macOS compressed or swapped. Under the load of the PASDA
   family they understate what the JVMs held.
-- **`prog-equiv`** (master) answers `eq` whenever it finds no difference among
-  at most 20 paths of at most 1000 instructions per version, even when no trace
-  finishes: hence its 8 wrong `eq`. Its 10 other wrong answers are `neq` on `Eq`
-  pairs that differ on the JVM. It crashes on 41 pairs: `System.out` (24,
-  `interpreter/src/interpreter.rs:195`), classes other than `oldV` / `newV`
-  (14), a class without a constructor without parameters (2) and an `int[]`
-  parameter (1).
+- **`prog-equiv`** gives the same 18 wrong answers as at 300 s, and crashes on
+  the same 41 pairs.
 
 ## Shortlist
 
