@@ -272,9 +272,12 @@ def answers_per_tool(runs: list[Run], theme: dict):
         ax.set_xlabel("time limit (s)")
     for row in axes:
         row[0].set_ylabel("pairs")
-    axes[0][0].legend(loc="upper left")
     subtitle(fig, runs, theme)
     fig.tight_layout(w_pad=3)
+    # Below the panels, as in `answers`: in the first panel it would cross the
+    # lines of a tool answering early.
+    handles, names = axes[0][0].get_legend_handles_labels()
+    fig.legend(handles, names, loc="upper center", bbox_to_anchor=(0.5, 0), ncols=2)
     for ax, ends in labels:
         direct_labels(ax, ends, timeout, theme)
     return fig
