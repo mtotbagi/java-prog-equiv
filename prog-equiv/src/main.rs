@@ -125,25 +125,18 @@ fn are_equiv(class_old: Class, class_new: Class, method: &Method) -> Option<bool
 
     let mut params = Params::new();
     params.set_u32("timeout", interpreter::SOLVER_TIMEOUT_MS);
-    let res_old = conc_old.run(method, 1000, 20);
-    let res_new = conc_new.run(method, 1000, 20);
-    let mut is_unkown = false;
+    let res_old: Vec<Run> = conc_old.into_iter(method, 1000).take(20).collect();
+    let res_new: Vec<Run> = conc_new.into_iter(method, 1000).take(20).collect();
     let checker = Checker {
         old_interp: &interpreter_old,
         new_interp: &interpreter_new,
         method,
         params: &params,
     };
-    for res1 in &res_old {
-        for res2 in &res_new {
-            match checker.check_case(res1, res2) {
-                Some(true) => (),
-                Some(false) => return Some(false),
-                None => is_unkown = true,
-            }
-        }
-    }
-    if is_unkown { None } else { Some(true) }
+    let cases = res_old
+        .iter()
+        .flat_map(|r1| res_new.iter().map(move |r2| (r1, r2)));
+    checker.check_cases(cases)
 }
 
 struct Checker<'a> {
@@ -153,6 +146,18 @@ struct Checker<'a> {
     params: &'a Params,
 }
 impl<'a> Checker<'a> {
+    fn check_cases<'b>(&self, cases: impl Iterator<Item = (&'b Run, &'b Run)>) -> Option<bool> {
+        let mut is_unkown = false;
+        for (a, b) in cases {
+            match self.check_case(a, b) {
+                Some(true) => (),
+                Some(false) => return Some(false),
+                None => is_unkown = true,
+            }
+        }
+        if is_unkown { None } else { Some(true) }
+    }
+
     fn check_case(&self, (old_input1, p1, r1): &Run, (old_input2, p2, r2): &Run) -> Option<bool> {
         if *r1 == *r2 {
             return Some(true);

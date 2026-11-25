@@ -47,7 +47,7 @@ fn main() {
     };
 
     let executor = ConcolicExecutor::new(class);
-    let res = executor.run(&method, 1000, 100);
+    let res: Vec<_> = executor.into_iter(&method, 1000).take(100).collect();
     use std::collections::HashSet;
     use std::mem::discriminant;
     dbg!(res.clone());
