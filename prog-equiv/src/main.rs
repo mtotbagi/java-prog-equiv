@@ -1,4 +1,10 @@
-use std::{env, fs::File, io::BufReader, path::Path};
+use std::{
+    env,
+    fs::File,
+    io::BufReader,
+    path::Path,
+    time::{Duration, Instant},
+};
 
 use eqbench::{
     case::CaseId,
@@ -10,6 +16,7 @@ use interpreter::{
 use z3::{Params, Solver, ast::Bool};
 
 fn main() {
+    let deadline = deadline();
     let args: Vec<String> = env::args().collect();
     // Extra arguments (e.g. the method name `eqbench analyse` passes) are ignored:
     // the method is read from the case's `J-Desc.json`.
@@ -18,7 +25,7 @@ fn main() {
         std::process::exit(2);
     }
 
-    let verdict = run(&args);
+    let verdict = run(&args, deadline);
     match verdict {
         Some(true) => println!("eq"),
         Some(false) => println!("neq"),
@@ -26,7 +33,7 @@ fn main() {
     }
 }
 
-fn run(args: &[String]) -> Option<bool> {
+fn run(args: &[String], deadline: Instant) -> Option<bool> {
     let (Ok(class_old), Ok(class_new)) = (
         class_from_path(&args[1], "oldV"),
         class_from_path(&args[2], "newV"),
@@ -58,7 +65,24 @@ fn run(args: &[String]) -> Option<bool> {
         }
     };
 
-    are_equiv(class_old.clone(), class_new.clone(), method)
+    are_equiv(class_old.clone(), class_new.clone(), method, deadline)
+}
+
+/// Time budget when `EQBENCH_TIMEOUT` is not set.
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Time kept back from the budget to print the answer before being killed.
+const TIMEOUT_MARGIN: Duration = Duration::from_secs(1);
+
+/// When to stop searching: the timeout `eqbench analyse` gives in `EQBENCH_TIMEOUT`
+/// (seconds), or `DEFAULT_TIMEOUT`, minus a margin.
+fn deadline() -> Instant {
+    let start = Instant::now();
+    let timeout = env::var("EQBENCH_TIMEOUT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .map_or(DEFAULT_TIMEOUT, Duration::from_secs);
+    let budget = timeout.saturating_sub(TIMEOUT_MARGIN).max(timeout / 2);
+    start + budget
 }
 
 /// Description of the case, read from its `J-Desc.json`.
@@ -117,26 +141,60 @@ fn class_from_path(path: &str, main: &str) -> Result<Class, ()> {
     Ok(Class::from_json(&json))
 }
 
-fn are_equiv(class_old: Class, class_new: Class, method: &Method) -> Option<bool> {
-    let conc_old = ConcolicExecutor::new(class_old.clone());
-    let conc_new = ConcolicExecutor::new(class_new.clone());
+fn are_equiv(
+    class_old: Class,
+    class_new: Class,
+    method: &Method,
+    deadline: Instant,
+) -> Option<bool> {
+    let mut iter_old = ConcolicExecutor::new(class_old.clone()).into_iter(method, 1000);
+    let mut iter_new = ConcolicExecutor::new(class_new.clone()).into_iter(method, 1000);
     let interpreter_new = Interpreter::new(class_new);
     let interpreter_old = Interpreter::new(class_old);
 
     let mut params = Params::new();
     params.set_u32("timeout", interpreter::SOLVER_TIMEOUT_MS);
-    let res_old: Vec<Run> = conc_old.into_iter(method, 1000).take(20).collect();
-    let res_new: Vec<Run> = conc_new.into_iter(method, 1000).take(20).collect();
     let checker = Checker {
         old_interp: &interpreter_old,
         new_interp: &interpreter_new,
         method,
         params: &params,
     };
-    let cases = res_old
-        .iter()
-        .flat_map(|r1| res_new.iter().map(move |r2| (r1, r2)));
-    checker.check_cases(cases)
+
+    let mut old_runs: Vec<Run> = Vec::new();
+    let mut new_runs: Vec<Run> = Vec::new();
+    let mut unknown = false;
+
+    while Instant::now() < deadline {
+        let mut progressed = false;
+        if let Some(old) = iter_old.next() {
+            progressed = true;
+            let pairs = new_runs.iter().map(|new| (&old, new));
+            match checker.check_cases(pairs, deadline) {
+                Some(true) => (),
+                Some(false) => return Some(false),
+                None => unknown = true,
+            }
+            old_runs.push(old);
+        }
+        if let Some(new) = iter_new.next() {
+            progressed = true;
+            let pairs = old_runs.iter().map(|old| (old, &new));
+            match checker.check_cases(pairs, deadline) {
+                Some(true) => (),
+                Some(false) => return Some(false),
+                None => unknown = true,
+            }
+            new_runs.push(new);
+        }
+        if !progressed {
+            // Every path of both versions has been compared.
+            return if unknown { None } else { Some(true) };
+        }
+    }
+    // The time is up, and we haven't seen any neq cases, guess eq
+    // Arguably we should return unkown, but then we could return unkown even if we hit a didnotfinish run
+    return if unknown { None } else { Some(true) };
 }
 
 struct Checker<'a> {
@@ -146,9 +204,15 @@ struct Checker<'a> {
     params: &'a Params,
 }
 impl<'a> Checker<'a> {
-    fn check_cases<'b>(&self, cases: impl Iterator<Item = (&'b Run, &'b Run)>) -> Option<bool> {
+    fn check_cases<'b>(
+        &self,
+        mut cases: impl Iterator<Item = (&'b Run, &'b Run)>,
+        deadline: Instant,
+    ) -> Option<bool> {
         let mut is_unkown = false;
-        for (a, b) in cases {
+        while Instant::now() < deadline
+            && let Some((a, b)) = cases.next()
+        {
             match self.check_case(a, b) {
                 Some(true) => (),
                 Some(false) => return Some(false),
