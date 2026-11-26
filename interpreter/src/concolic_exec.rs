@@ -18,8 +18,8 @@ use std::{
 };
 
 use z3::{
-    Model, Params, SatResult, Solver,
-    ast::{BV, Bool, Float},
+    Model, Params, SatResult, Solver, Sort,
+    ast::{BV, Bool, Float, RoundingMode},
 };
 
 use crate::*;
@@ -357,12 +357,12 @@ pub fn next_input(model: &Model, old_input: &(Vec<StackValue>, Heap)) -> (Vec<St
                 StackValue::Long(solved, bv.clone())
             }
             StackValue::Float(old, f) => {
-                let solved =
-                    eval_float_bits(model, f).map_or(*old, |bits| f32::from_bits(bits as u32));
+                // Widening f32 -> f64 is exact, so is the cast back.
+                let solved = eval_double(model, &widen_to_double(f)).map_or(*old, |d| d as f32);
                 StackValue::Float(solved, f.clone())
             }
             StackValue::Double(old, f) => {
-                let solved = eval_float_bits(model, f).map_or(*old, f64::from_bits);
+                let solved = eval_double(model, f).unwrap_or(*old);
                 StackValue::Double(solved, f.clone())
             }
             other => other.clone(),
@@ -376,7 +376,14 @@ fn eval_bits(model: &Model, bv: &BV) -> Option<u64> {
     model.eval(bv, true)?.as_u64()
 }
 
-/// Value of a floating point term in the model, as its IEEE-754 bits.
-fn eval_float_bits(model: &Model, f: &Float) -> Option<u64> {
-    eval_bits(model, &f.to_ieee_bv())
+/// Value of a double-sorted floating point term in the model.
+fn eval_double(model: &Model, f: &Float) -> Option<f64> {
+    Some(model.eval(f, true)?.as_f64())
+}
+
+/// Exact conversion of a single precision term to double precision.
+/// Needed because z3's numeral -> double conversion flushes single precision
+/// subnormals to zero.
+fn widen_to_double(f: &Float) -> Float {
+    f.to_fp_with_rounding_mode(&RoundingMode::round_nearest_ties_to_even(), &Sort::double())
 }
