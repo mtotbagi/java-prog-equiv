@@ -373,12 +373,12 @@ pub fn next_input(model: &Model, old_input: &(Vec<StackValue>, Heap)) -> (Vec<St
 
 /// Value of a bitvector in the model, as unsigned bits.
 fn eval_bits(model: &Model, bv: &BV) -> Option<u64> {
-    model.eval(bv, true)?.as_u64()
+    model.eval(bv, false)?.as_u64()
 }
 
 /// Value of a double-sorted floating point term in the model.
 fn eval_double(model: &Model, f: &Float) -> Option<f64> {
-    Some(model.eval(f, true)?.as_f64())
+    Some(model.eval(f, false)?.as_f64())
 }
 
 /// Exact conversion of a single precision term to double precision.
