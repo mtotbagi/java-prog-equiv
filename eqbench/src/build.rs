@@ -12,7 +12,7 @@
 //! ```text
 //! staging/<old|new>/benchmarks/<bench>/<prog>/<Eq|Neq>/<oldV|newV>.java
 //! classes/<old|new>/benchmarks/<bench>/<prog>/<Eq|Neq>/*.class
-//! cases/<case-id>/<old|new>/{<oldV|newV>.java,*.json}
+//! cases/<case-id>/<old|new>/{<oldV|newV>.java,<oldV|newV>.c,*.json}
 //! cases/<case-id>/miter/{src,classes}/   or   cases/<case-id>/no-miter.txt
 //! ```
 //!
@@ -87,6 +87,8 @@ pub struct Report {
     pub sources: usize,
     /// Sources whose package or class name had to be fixed.
     pub fixed_sources: usize,
+    /// C sources copied next to the Java ones, for tools such as KLEE.
+    pub c_sources: usize,
     pub compile_failures: Vec<Failure>,
     pub classes: usize,
     pub decompile_failures: Vec<Failure>,
@@ -267,13 +269,22 @@ fn decompile(dataset: &Dataset, layout: &Layout, report: &mut Report) -> Result<
     let mut jobs = Vec::new();
     for case in &dataset.cases {
         for version in Version::ALL {
+            let out = layout.case_dir(&case.id, version);
+            fs::create_dir_all(&out).with_context(|| format!("cannot create {}", out.display()))?;
+
+            // C tools get the original source next to the staged Java source,
+            // under the canonical `oldV.c` / `newV.c` name.
+            if let Some(c_source) = case.c_source(version) {
+                fs::copy(&c_source, out.join(Case::c_file_name(version)))
+                    .with_context(|| format!("cannot copy {}", c_source.display()))?;
+                report.c_sources += 1;
+            }
+
             let classes = layout.classes(version).join(case.id.package_dir());
             // Missing when the case did not compile, already reported.
             let Ok(entries) = fs::read_dir(&classes) else {
                 continue;
             };
-            let out = layout.case_dir(&case.id, version);
-            fs::create_dir_all(&out).with_context(|| format!("cannot create {}", out.display()))?;
             let file = case
                 .source(version)
                 .file_name()

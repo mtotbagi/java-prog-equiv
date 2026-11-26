@@ -11,6 +11,9 @@ use crate::desc::{DESC_FILE, Desc};
 pub const OLD_FILE: &str = "oldV.java";
 /// Name of the modified version of a program in a case directory.
 pub const NEW_FILE: &str = "newV.java";
+/// Names of the C versions of a program, when the case has them.
+pub const OLD_C_FILE: &str = "oldV.c";
+pub const NEW_C_FILE: &str = "newV.c";
 
 /// Ground truth of a case, given by the name of its directory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -136,6 +139,29 @@ impl Case {
         match version {
             Version::Old => &self.old,
             Version::New => &self.new,
+        }
+    }
+
+    /// C source of one version in the original dataset, when it exists.
+    /// Some cases use `old.c` / `new.c` rather than the `V` spelling.
+    pub fn c_source(&self, version: Version) -> Option<PathBuf> {
+        let short = match version {
+            Version::Old => "old.c",
+            Version::New => "new.c",
+        };
+        [self.dir.join(match version {
+            Version::Old => OLD_C_FILE,
+            Version::New => NEW_C_FILE,
+        }), self.dir.join(short)]
+        .into_iter()
+        .find(|path| path.is_file())
+    }
+
+    /// Name under which the C source is stored in a built case directory.
+    pub fn c_file_name(version: Version) -> &'static str {
+        match version {
+            Version::Old => OLD_C_FILE,
+            Version::New => NEW_C_FILE,
         }
     }
 }

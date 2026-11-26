@@ -153,6 +153,7 @@ fn build(dataset: &Dataset) -> Result<()> {
         report.classes,
         report.decompile_failures.len(),
     );
+    outln!("copied {} C sources", report.c_sources);
     outln!(
         "generated {} miters ({} cases without one, {} failures)",
         report.miters,
