@@ -141,14 +141,18 @@ fn class_from_path(path: &str, main: &str) -> Result<Class, ()> {
     Ok(Class::from_json(&json))
 }
 
+const DEFAULT_WORKERS: usize = 4;
+
 fn are_equiv(
     class_old: Class,
     class_new: Class,
     method: &Method,
     deadline: Instant,
 ) -> Option<bool> {
-    let mut iter_old = ConcolicExecutor::new(class_old.clone()).into_iter(method, 1000);
-    let mut iter_new = ConcolicExecutor::new(class_new.clone()).into_iter(method, 1000);
+    let mut iter_old =
+        ConcolicExecutor::new(class_old.clone()).into_iter(method, 1000, deadline, DEFAULT_WORKERS);
+    let mut iter_new =
+        ConcolicExecutor::new(class_new.clone()).into_iter(method, 1000, deadline, DEFAULT_WORKERS);
     let interpreter_new = Interpreter::new(class_new);
     let interpreter_old = Interpreter::new(class_old);
 

@@ -1,3 +1,20 @@
+//! Implements a concolic executor as an iterator returning the possible paths a Java program can take.
+//! Some paths (which cannot be solved by z3) will be discarded
+//!
+//! Internally uses rayon threadpool to preemtively compute items which returned by the iterator when needed
+//!
+//! As z3 is not thread-safe, no symbolic data is being passed between threads,
+//! they are recomputed (cheaply) by interpreting the input they were generated from the first time.
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering::Relaxed},
+        mpsc::{self, Receiver, RecvTimeoutError, Sender},
+    },
+    thread::{self, JoinHandle},
+    time::Instant,
+};
+
 use z3::{
     Model, Params, SatResult, Solver,
     ast::{BV, Bool, Float},
@@ -58,69 +75,211 @@ impl ConcolicExecutor {
         Ok((args, Heap { heap }))
     }
 
-    pub fn into_iter(self, method: &Method, step_count: u32) -> impl Iterator<Item = Run> {
+    pub fn into_iter(
+        self,
+        method: &Method,
+        step_count: u32,
+        deadline: Instant,
+        workers: usize,
+    ) -> impl Iterator<Item = Run> {
         let initial_input = self.initial_input(method).unwrap();
-        let mut params = Params::new();
-        params.set_u32("timeout", SOLVER_TIMEOUT_MS);
+        let stop = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = mpsc::channel();
+        let explorer = Explorer {
+            executor: self.clone(),
+            method: method.clone(),
+            step_count,
+            deadline,
+            stop: stop.clone(),
+            tx,
+        };
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(workers.max(1))
+            .build()
+            .unwrap();
+        let producer = thread::spawn(move || pool.scope(|s| explorer.visit(s, WorkItem::Root)));
         ConcolicPathsIter {
+            rx,
             initial_input,
-            paths_to_explore: vec![vec![]],
             interpreter: self.interpreter,
             method: method.clone(),
-            params,
             step_count,
+            deadline,
+            stop,
+            producer: Some(producer),
         }
     }
 }
 
-type Path = Vec<Bool>;
 type Input = (Vec<StackValue>, Heap);
 
-struct ConcolicPathsIter {
-    initial_input: Input,
-    paths_to_explore: Vec<Path>,
-    interpreter: Interpreter,
-    method: Method,
-    params: Params,
-    step_count: u32,
+/// The concrete part of an input value
+/// it holds no z3 terms, can be sent between threads.
+#[derive(Clone, Debug)]
+enum ConcreteArg {
+    Int(i32),
+    Long(i64),
+    Float(f32),
+    Double(f64),
+    /// Special case for the `this` argument on non-static method in java.
+    /// We cannot handle other types of reference inputs in the entry method
+    Ref,
 }
 
-impl ConcolicPathsIter {
-    fn next_input(&mut self) -> Option<(Input, usize)> {
-        loop {
-            let solver = new_solver();
-            solver.set_params(&self.params);
-            let path = self.paths_to_explore.pop()?;
-            for c in &path {
-                solver.assert(c);
-            }
-            if solver.check() == SatResult::Sat {
-                let model = solver.get_model().unwrap();
-                return Some((next_input(&model, &self.initial_input), path.len()));
-            }
+type ConcreteInput = Vec<ConcreteArg>;
+
+fn to_concrete((args, _): &Input) -> ConcreteInput {
+    args.iter()
+        .map(|value| match value {
+            StackValue::Int(v, _) => ConcreteArg::Int(*v),
+            StackValue::Long(v, _) => ConcreteArg::Long(*v),
+            StackValue::Float(v, _) => ConcreteArg::Float(*v),
+            StackValue::Double(v, _) => ConcreteArg::Double(*v),
+            StackValue::Ref(..) => ConcreteArg::Ref,
+        })
+        .collect()
+}
+
+fn from_concrete(initial: &Input, concrete: &ConcreteInput) -> Input {
+    let args = initial
+        .0
+        .iter()
+        .zip(concrete)
+        .map(|(value, c)| match (value, c) {
+            (StackValue::Int(_, bv), ConcreteArg::Int(v)) => StackValue::Int(*v, bv.clone()),
+            (StackValue::Long(_, bv), ConcreteArg::Long(v)) => StackValue::Long(*v, bv.clone()),
+            (StackValue::Float(_, f), ConcreteArg::Float(v)) => StackValue::Float(*v, f.clone()),
+            (StackValue::Double(_, f), ConcreteArg::Double(v)) => StackValue::Double(*v, f.clone()),
+            (other, _) => other.clone(),
+        })
+        .collect();
+    (args, initial.1.clone())
+}
+
+enum WorkItem {
+    /// Run the initial input as it is.
+    Root,
+    /// Re-run `parent`, then find an input that flips condition `index` of its path.
+    Flip { parent: ConcreteInput, index: usize },
+}
+
+/// Explores the paths on a rayon pool, sending the input found for each one.
+struct Explorer {
+    executor: ConcolicExecutor,
+    method: Method,
+    step_count: u32,
+    deadline: Instant,
+    /// Set when the consumer is gone.
+    stop: Arc<AtomicBool>,
+    tx: Sender<ConcreteInput>,
+}
+
+impl Explorer {
+    /// Explores `item`, and spawns a task for each path found from it.
+    fn visit<'s>(&'s self, scope: &rayon::Scope<'s>, item: WorkItem) {
+        // If deadline has passed or the iterator has been dropped
+        if self.stop.load(Relaxed) || Instant::now() >= self.deadline {
+            return;
+        }
+        let Some((input, children)) = self.explore(item) else {
+            return;
+        };
+        // The last task spawned runs first, so the children are explored in order.
+        for child in children {
+            scope.spawn(move |s| self.visit(s, child));
+        }
+        if self.tx.send(input).is_err() {
+            self.stop.store(true, Relaxed);
         }
     }
+
+    /// Returns the input on the path `item` describes, and the paths to explore from it,
+    /// or `None` if no input follows that path.
+    fn explore(&self, item: WorkItem) -> Option<(ConcreteInput, Vec<WorkItem>)> {
+        // Made on every call: z3 terms belong to the thread that created them.
+        let initial = self.executor.initial_input(&self.method).unwrap();
+        let (input, depth) = match item {
+            WorkItem::Root => (initial, 0),
+            WorkItem::Flip { parent, index } => {
+                let parent = from_concrete(&initial, &parent);
+                let (_, path, _) = self.interpret(parent.clone());
+                let solver = new_solver();
+                let mut params = Params::new();
+                params.set_u32("timeout", SOLVER_TIMEOUT_MS);
+                solver.set_params(&params);
+                for c in &path[..index] {
+                    solver.assert(c);
+                }
+                solver.assert(path[index].not());
+                if solver.check() != SatResult::Sat {
+                    return None;
+                }
+                let model = solver.get_model().unwrap();
+                (next_input(&model, &parent), index + 1)
+            }
+        };
+        let (_, path, _) = self.interpret(input.clone());
+        let input = to_concrete(&input);
+        let children = (depth..path.len())
+            .rev()
+            .map(|index| WorkItem::Flip {
+                parent: input.clone(),
+                index,
+            })
+            .collect();
+        Some((input, children))
+    }
+
+    fn interpret(&self, input: Input) -> (Vec<State>, Vec<Bool>, ExeResult) {
+        self.executor
+            .interpreter
+            .interpret(&self.method, input, self.step_count)
+    }
+}
+
+struct ConcolicPathsIter {
+    /// Inputs found by the workers.
+    rx: Receiver<ConcreteInput>,
+    /// The initial input, with the symbolic terms of the consumer's thread.
+    initial_input: Input,
+    interpreter: Interpreter,
+    method: Method,
+    step_count: u32,
+    deadline: Instant,
+    stop: Arc<AtomicBool>,
+    /// The thread running the explorer's pool.
+    producer: Option<JoinHandle<()>>,
 }
 
 impl Iterator for ConcolicPathsIter {
     type Item = Run;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let (input, depth) = self.next_input()?;
+        let timeout = self.deadline.saturating_duration_since(Instant::now());
+        let concrete = match self.rx.recv_timeout(timeout) {
+            Ok(concrete) => concrete,
+            Err(RecvTimeoutError::Timeout) => return None,
+            Err(RecvTimeoutError::Disconnected) => {
+                // The explorer is done: either all paths are explored, or a task panicked.
+                if let Some(producer) = self.producer.take()
+                    && let Err(panic) = producer.join()
+                {
+                    std::panic::resume_unwind(panic);
+                }
+                return None;
+            }
+        };
+        let input = from_concrete(&self.initial_input, &concrete);
         let (_, path, r) = self
             .interpreter
             .interpret(&self.method, input.clone(), self.step_count);
-        // Negate every condition from some depth n
-        for i in depth..path.len() {
-            let mut new_path = Vec::with_capacity(i + 1);
-            // Keep the path the same until the negated condition
-            for c in &path[..i] {
-                new_path.push(c.clone());
-            }
-            new_path.push(path[i].not());
-            self.paths_to_explore.push(new_path);
-        }
         Some((input, path, r))
+    }
+}
+
+impl Drop for ConcolicPathsIter {
+    fn drop(&mut self) {
+        self.stop.store(true, Relaxed);
     }
 }
 
