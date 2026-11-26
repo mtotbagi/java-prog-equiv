@@ -336,7 +336,9 @@ impl FromJson for Instruction {
                 to: SimpleType::from_json(&json["to"]),
             },
             "comparefloating" => Self::CompareFloat {
-                on_nan: i32::from_json(&json["onnan"]),
+                // jvm2json's `onnan` is inverted w.r.t. the JVM spec (it gives 1 for
+                // dcmpl and -1 for dcmpg), so negate it to get the value pushed on NaN.
+                on_nan: -i32::from_json(&json["onnan"]),
                 double: json["type"] == Value::String("double".to_string()),
             },
             "put" => {
