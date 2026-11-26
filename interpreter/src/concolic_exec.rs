@@ -32,22 +32,59 @@ pub fn new_solver() -> Solver {
     Solver::new_for_logic("QF_FPBV").unwrap()
 }
 
-#[derive(Debug, Clone)]
-pub struct ConcolicExecutor {
-    interpreter: Interpreter,
+/// Iterates over the paths `method` of `class` can take, each with an input following it.
+pub fn concolic_paths(
+    class: Class,
+    method: &Method,
+    step_count: u32,
+    deadline: Instant,
+    workers: usize,
+) -> impl Iterator<Item = Run> {
+    let runner = Runner {
+        interpreter: Interpreter::new(class),
+        method: method.clone(),
+        step_count,
+    };
+    let initial_input = runner.initial_input();
+    let stop = Arc::new(AtomicBool::new(false));
+    let (tx, rx) = mpsc::channel();
+    let explorer = Explorer {
+        runner: runner.clone(),
+        deadline,
+        stop: stop.clone(),
+        tx,
+        queue: Mutex::default(),
+    };
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(workers.max(1))
+        .build()
+        .unwrap();
+    let producer = thread::spawn(move || pool.scope(|s| explorer.push(s, 0, WorkItem::Root)));
+    ConcolicPathsIter {
+        rx,
+        initial_input,
+        runner,
+        deadline,
+        stop,
+        producer: Some(producer),
+    }
 }
 
-impl ConcolicExecutor {
-    pub fn new(class: Class) -> Self {
-        ConcolicExecutor {
-            interpreter: Interpreter::new(class),
-        }
-    }
+/// Runs one method of a class, shared by the explorer and the iterator.
+#[derive(Clone)]
+struct Runner {
+    interpreter: Interpreter,
+    method: Method,
+    step_count: u32,
+}
 
-    pub fn initial_input(&self, method: &Method) -> Result<Input, String> {
+impl Runner {
+    /// The input with every argument symbolic and zero.
+    /// Made per thread: z3 terms belong to the thread that created them.
+    fn initial_input(&self) -> Input {
         let mut args = Vec::new();
         let mut heap = Vec::new();
-        if !method.is_static {
+        if !self.method.is_static {
             args.push(StackValue::Ref(
                 Some(0),
                 Bool::from_bool(true),
@@ -55,7 +92,7 @@ impl ConcolicExecutor {
             ));
             heap.push(self.interpreter.class().new_object());
         }
-        for (i, ty) in method.id.params.iter().enumerate() {
+        for (i, ty) in self.method.id.params.iter().enumerate() {
             let name = format!("arg{i}");
             let name = name.as_str();
             let value = match ty {
@@ -68,73 +105,18 @@ impl ConcolicExecutor {
                 SimpleType::Float => StackValue::Float(0.0, Float::new_const_float32(name)),
                 SimpleType::Double => StackValue::Double(0.0, Float::new_const_double(name)),
                 SimpleType::SimpleRef(_) => {
-                    return Err(format!(
-                        "method argument type not implemented: {ty:?} (argument {i})"
-                    ));
+                    panic!("method argument type not implemented: {ty:?} (argument {i})")
                 }
             };
             args.push(value);
         }
-        Ok((args, Heap { heap }))
-    }
-
-    pub fn into_iter(
-        self,
-        method: &Method,
-        step_count: u32,
-        deadline: Instant,
-        workers: usize,
-    ) -> impl Iterator<Item = Run> {
-        let runner = Runner {
-            executor: self,
-            method: method.clone(),
-            step_count,
-        };
-        let initial_input = runner.initial_input();
-        let stop = Arc::new(AtomicBool::new(false));
-        let (tx, rx) = mpsc::channel();
-        let explorer = Explorer {
-            runner: runner.clone(),
-            deadline,
-            stop: stop.clone(),
-            tx,
-            queue: Mutex::default(),
-        };
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(workers.max(1))
-            .build()
-            .unwrap();
-        let producer = thread::spawn(move || pool.scope(|s| explorer.push(s, 0, WorkItem::Root)));
-        ConcolicPathsIter {
-            rx,
-            initial_input,
-            runner,
-            deadline,
-            stop,
-            producer: Some(producer),
-        }
-    }
-}
-
-/// Runs one method of the executor's class, shared by the explorer and the iterator.
-#[derive(Clone)]
-struct Runner {
-    executor: ConcolicExecutor,
-    method: Method,
-    step_count: u32,
-}
-
-impl Runner {
-    /// Made per thread: z3 terms belong to the thread that created them.
-    fn initial_input(&self) -> Input {
-        self.executor.initial_input(&self.method).unwrap()
+        (args, Heap { heap })
     }
 
     fn run(&self, input: Input) -> (Vec<Bool>, ExeResult) {
-        let (_, path, result) =
-            self.executor
-                .interpreter
-                .interpret(&self.method, input, self.step_count);
+        let (_, path, result) = self
+            .interpreter
+            .interpret(&self.method, input, self.step_count);
         (path, result)
     }
 }

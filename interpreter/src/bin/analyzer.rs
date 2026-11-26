@@ -50,10 +50,8 @@ fn main() {
         no_halt: "no".to_string(),
     };
 
-    let executor = ConcolicExecutor::new(class);
     let deadline = Instant::now() + Duration::from_secs(4);
-    let res: Vec<_> = executor
-        .into_iter(&method, 1000, deadline, 1)
+    let res: Vec<_> = concolic_paths(class, &method, 1000, deadline, 1)
         .take(100)
         .collect();
     use std::collections::HashSet;

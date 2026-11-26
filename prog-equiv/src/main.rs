@@ -11,7 +11,7 @@ use eqbench::{
     desc::{DESC_FILE, Desc},
 };
 use interpreter::{
-    Class, ConcolicExecutor, ExeResult, FromJson, Interpreter, Method, Run, next_input,
+    Class, ExeResult, FromJson, Interpreter, Method, Run, concolic_paths, next_input,
 };
 use z3::{Params, ast::Bool};
 
@@ -149,10 +149,8 @@ fn are_equiv(
     method: &Method,
     deadline: Instant,
 ) -> Option<bool> {
-    let mut iter_old =
-        ConcolicExecutor::new(class_old.clone()).into_iter(method, 1000, deadline, DEFAULT_WORKERS);
-    let mut iter_new =
-        ConcolicExecutor::new(class_new.clone()).into_iter(method, 1000, deadline, DEFAULT_WORKERS);
+    let mut iter_old = concolic_paths(class_old.clone(), method, 1000, deadline, DEFAULT_WORKERS);
+    let mut iter_new = concolic_paths(class_new.clone(), method, 1000, deadline, DEFAULT_WORKERS);
     let interpreter_new = Interpreter::new(class_new);
     let interpreter_old = Interpreter::new(class_old);
 
