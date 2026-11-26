@@ -1,3 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["eqbench","interpreter", "prog-equiv"]
+
+
+[profile.release]
+debug = true
