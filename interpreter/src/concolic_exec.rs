@@ -24,7 +24,8 @@ use z3::{
 
 use crate::*;
 
-pub type Run = ((Vec<StackValue>, Heap), Vec<z3::ast::Bool>, ExeResult);
+pub type Input = (Vec<StackValue>, Heap);
+pub type Run = (Input, Vec<Bool>, ExeResult);
 pub const SOLVER_TIMEOUT_MS: u32 = 100;
 
 pub fn new_solver() -> Solver {
@@ -43,7 +44,7 @@ impl ConcolicExecutor {
         }
     }
 
-    pub fn initial_input(&self, method: &Method) -> Result<(Vec<StackValue>, Heap), String> {
+    pub fn initial_input(&self, method: &Method) -> Result<Input, String> {
         let mut args = Vec::new();
         let mut heap = Vec::new();
         if !method.is_static {
@@ -84,13 +85,16 @@ impl ConcolicExecutor {
         deadline: Instant,
         workers: usize,
     ) -> impl Iterator<Item = Run> {
-        let initial_input = self.initial_input(method).unwrap();
+        let runner = Runner {
+            executor: self,
+            method: method.clone(),
+            step_count,
+        };
+        let initial_input = runner.initial_input();
         let stop = Arc::new(AtomicBool::new(false));
         let (tx, rx) = mpsc::channel();
         let explorer = Explorer {
-            executor: self.clone(),
-            method: method.clone(),
-            step_count,
+            runner: runner.clone(),
             deadline,
             stop: stop.clone(),
             tx,
@@ -104,9 +108,7 @@ impl ConcolicExecutor {
         ConcolicPathsIter {
             rx,
             initial_input,
-            interpreter: self.interpreter,
-            method: method.clone(),
-            step_count,
+            runner,
             deadline,
             stop,
             producer: Some(producer),
@@ -114,7 +116,28 @@ impl ConcolicExecutor {
     }
 }
 
-type Input = (Vec<StackValue>, Heap);
+/// Runs one method of the executor's class, shared by the explorer and the iterator.
+#[derive(Clone)]
+struct Runner {
+    executor: ConcolicExecutor,
+    method: Method,
+    step_count: u32,
+}
+
+impl Runner {
+    /// Made per thread: z3 terms belong to the thread that created them.
+    fn initial_input(&self) -> Input {
+        self.executor.initial_input(&self.method).unwrap()
+    }
+
+    fn run(&self, input: Input) -> (Vec<Bool>, ExeResult) {
+        let (_, path, result) =
+            self.executor
+                .interpreter
+                .interpret(&self.method, input, self.step_count);
+        (path, result)
+    }
+}
 
 /// The concrete part of an input value
 /// it holds no z3 terms, can be sent between threads.
@@ -166,21 +189,15 @@ enum WorkItem {
     Flip { parent: ConcreteInput, index: usize },
 }
 
-/// A work item waiting in the queue. The highest `weight` is explored first;
+/// A work item waiting in the queue. The highest `weight` is explored first.
 struct Queued {
     weight: u64,
     item: WorkItem,
 }
 
-impl Queued {
-    fn key(&self) -> u64 {
-        self.weight
-    }
-}
-
 impl PartialEq for Queued {
     fn eq(&self, other: &Self) -> bool {
-        self.key() == other.key()
+        self.weight == other.weight
     }
 }
 
@@ -194,15 +211,13 @@ impl PartialOrd for Queued {
 
 impl Ord for Queued {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.key().cmp(&other.key())
+        self.weight.cmp(&other.weight)
     }
 }
 
 /// Explores the paths on a rayon pool, sending the input found for each one.
 struct Explorer {
-    executor: ConcolicExecutor,
-    method: Method,
-    step_count: u32,
+    runner: Runner,
     deadline: Instant,
     /// Set when the consumer is gone.
     stop: Arc<AtomicBool>,
@@ -217,10 +232,7 @@ impl Explorer {
     /// Every push spawns exactly one task and every task pops exactly one item,
     /// so a task never finds the queue empty, and the scope ends when the queue does.
     fn push<'s>(&'s self, scope: &rayon::Scope<'s>, weight: u64, item: WorkItem) {
-        {
-            let mut queue = self.queue.lock().unwrap();
-            queue.push(Queued { weight, item });
-        }
+        self.queue.lock().unwrap().push(Queued { weight, item });
         scope.spawn(move |s| {
             let next = self.queue.lock().unwrap().pop().unwrap();
             self.visit(s, next.item);
@@ -252,29 +264,17 @@ impl Explorer {
     /// Returns the input on the path `item` describes, and the weighted paths to explore
     /// from it, or `None` if no input follows that path.
     fn explore(&self, item: WorkItem) -> Option<(ConcreteInput, Vec<(u64, WorkItem)>)> {
-        // Made on every call: z3 terms belong to the thread that created them.
-        let initial = self.executor.initial_input(&self.method).unwrap();
+        let initial = self.runner.initial_input();
         let (input, depth) = match item {
             WorkItem::Root => (initial, 0),
             WorkItem::Flip { parent, index } => {
                 let parent = from_concrete(&initial, &parent);
-                let (_, path, _) = self.interpret(parent.clone());
-                let solver = new_solver();
-                let mut params = Params::new();
-                params.set_u32("timeout", SOLVER_TIMEOUT_MS);
-                solver.set_params(&params);
-                for c in &path[..index] {
-                    solver.assert(c);
-                }
-                solver.assert(path[index].not());
-                if solver.check() != SatResult::Sat {
-                    return None;
-                }
-                let model = solver.get_model().unwrap();
+                let (path, _) = self.runner.run(parent.clone());
+                let model = flip(&path, index)?;
                 (next_input(&model, &parent), index + 1)
             }
         };
-        let (_, path, _) = self.interpret(input.clone());
+        let (path, _) = self.runner.run(input.clone());
         let input = to_concrete(&input);
         let children = (depth..path.len())
             .rev()
@@ -288,11 +288,20 @@ impl Explorer {
             .collect();
         Some((input, children))
     }
+}
 
-    fn interpret(&self, input: Input) -> (Vec<State>, Vec<Bool>, ExeResult) {
-        self.executor
-            .interpreter
-            .interpret(&self.method, input, self.step_count)
+fn flip(path: &[Bool], index: usize) -> Option<Model> {
+    let solver = new_solver();
+    let mut params = Params::new();
+    params.set_u32("timeout", SOLVER_TIMEOUT_MS);
+    solver.set_params(&params);
+    for c in &path[..index] {
+        solver.assert(c);
+    }
+    solver.assert(path[index].not());
+    match solver.check() {
+        SatResult::Sat => solver.get_model(),
+        _ => None,
     }
 }
 
@@ -301,9 +310,7 @@ struct ConcolicPathsIter {
     rx: Receiver<ConcreteInput>,
     /// The initial input, with the symbolic terms of the consumer's thread.
     initial_input: Input,
-    interpreter: Interpreter,
-    method: Method,
-    step_count: u32,
+    runner: Runner,
     deadline: Instant,
     stop: Arc<AtomicBool>,
     /// The thread running the explorer's pool.
@@ -329,10 +336,8 @@ impl Iterator for ConcolicPathsIter {
             }
         };
         let input = from_concrete(&self.initial_input, &concrete);
-        let (_, path, r) = self
-            .interpreter
-            .interpret(&self.method, input.clone(), self.step_count);
-        Some((input, path, r))
+        let (path, result) = self.runner.run(input.clone());
+        Some((input, path, result))
     }
 }
 
@@ -343,7 +348,7 @@ impl Drop for ConcolicPathsIter {
 }
 
 /// The same input, but with the values the model assigns to the symbolic variables.
-pub fn next_input(model: &Model, old_input: &(Vec<StackValue>, Heap)) -> (Vec<StackValue>, Heap) {
+pub fn next_input(model: &Model, old_input: &Input) -> Input {
     let values = old_input
         .0
         .iter()
