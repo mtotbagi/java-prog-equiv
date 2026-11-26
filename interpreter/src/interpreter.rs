@@ -116,16 +116,16 @@ impl Interpreter {
         match &bytecode[cur_frame.pc()] {
             Instruction::Load { ty, index } => cur_frame.load(*ty, *index),
             Instruction::Push { value } => match value {
-                Constant::Stack(val) => cur_frame.push(val.clone()),
-                Constant::Heap(val) => {
+                Constant::String(s) => {
                     let idx = state.heap.heap.len();
                     cur_frame.push(StackValue::Ref(
                         Some(idx as u32),
                         z3_false(),
                         BV::from_u64(idx as u64, 32),
                     ));
-                    state.heap.heap.push(val.clone());
+                    state.heap.heap.push(util::create_string(s, false));
                 }
+                value => cur_frame.push(value.to_stack_value()),
             },
             Instruction::Dup { words } => cur_frame.dup(*words),
             Instruction::Throw => return (Either::Result(AssertErr), None),
