@@ -26,10 +26,14 @@ use crate::*;
 
 pub type Input = (Vec<StackValue>, Heap);
 pub type Run = (Input, Vec<Bool>, ExeResult);
-pub const SOLVER_TIMEOUT_MS: u32 = 100;
+const SOLVER_TIMEOUT_MS: u32 = 100;
 
 pub fn new_solver() -> Solver {
-    Solver::new_for_logic("QF_FPBV").unwrap()
+    let solver = Solver::new_for_logic("QF_FPBV").unwrap();
+    let mut params = Params::new();
+    params.set_u32("timeout", SOLVER_TIMEOUT_MS);
+    solver.set_params(&params);
+    solver
 }
 
 /// Iterates over the paths `method` of `class` can take, each with an input following it.
@@ -274,9 +278,6 @@ impl Explorer {
 
 fn flip(path: &[Bool], index: usize) -> Option<Model> {
     let solver = new_solver();
-    let mut params = Params::new();
-    params.set_u32("timeout", SOLVER_TIMEOUT_MS);
-    solver.set_params(&params);
     for c in &path[..index] {
         solver.assert(c);
     }
