@@ -418,8 +418,30 @@ impl Array {
 
 #[derive(Clone, Debug)]
 pub enum Constant {
-    Stack(StackValue),
-    Heap(HeapValue),
+    Int(i32),
+    Long(i64),
+    Float(f32),
+    Double(f64),
+    Null,
+    String(String),
+}
+
+impl Constant {
+    /// The value pushed for any constant other than `String`, which lives on the heap.
+    pub fn to_stack_value(&self) -> StackValue {
+        match self {
+            Constant::Int(v) => StackValue::Int(*v, BV::from_i64(*v as i64, 32)),
+            Constant::Long(v) => StackValue::Long(*v, BV::from_i64(*v, 64)),
+            Constant::Float(v) => StackValue::Float(*v, Float::from_f32(*v)),
+            Constant::Double(v) => StackValue::Double(*v, Float::from_f64(*v)),
+            Constant::Null => StackValue::Ref(
+                None,
+                z3::ast::Bool::from_bool(false),
+                BV::from_u64(0, 32),
+            ),
+            Constant::String(_) => unreachable!("string constants are pushed to the heap"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -115,21 +115,20 @@ impl FromJson for StackValue {
 impl FromJson for Constant {
     fn from_json(json: &Value) -> Self {
         if json.is_null() {
-            return Self::Stack(StackValue::Ref(
-                None,
-                z3::ast::Bool::from_bool(false),
-                z3::ast::BV::from_u64(0, 32),
-            ));
+            return Self::Null;
         }
 
         let Value::String(s) = &json["type"] else {
             panic!("Invalid json {}", json)
         };
-        if s == "string" {
-            let val = json["value"].as_str().unwrap().to_string();
-            Self::Heap(crate::util::create_string(&val, false))
-        } else {
-            Self::Stack(StackValue::from_json(json))
+        let value = &json["value"];
+        match s.as_str() {
+            "string" => Self::String(value.as_str().unwrap().to_string()),
+            "int" | "integer" => Self::Int(i32::from_json(value)),
+            "float" => Self::Float(f32::from_json(value)),
+            "double" => Self::Double(f64::from_json(value)),
+            "long" => Self::Long(i64::from_json(value)),
+            _ => panic!("Invalid json {}", json),
         }
     }
 }
