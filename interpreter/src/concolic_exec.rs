@@ -7,6 +7,11 @@ use crate::*;
 
 pub type Run = ((Vec<StackValue>, Heap), Vec<z3::ast::Bool>, ExeResult);
 pub const SOLVER_TIMEOUT_MS: u32 = 100;
+
+pub fn new_solver() -> Solver {
+    Solver::new_for_logic("QF_FPBV").unwrap()
+}
+
 #[derive(Debug, Clone)]
 pub struct ConcolicExecutor {
     interpreter: Interpreter,
@@ -83,7 +88,7 @@ struct ConcolicPathsIter {
 impl ConcolicPathsIter {
     fn next_input(&mut self) -> Option<(Input, usize)> {
         loop {
-            let solver = Solver::new();
+            let solver = new_solver();
             solver.set_params(&self.params);
             let path = self.paths_to_explore.pop()?;
             for c in &path {

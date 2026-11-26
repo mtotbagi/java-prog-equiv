@@ -13,7 +13,7 @@ use eqbench::{
 use interpreter::{
     Class, ConcolicExecutor, ExeResult, FromJson, Interpreter, Method, Run, next_input,
 };
-use z3::{Params, Solver, ast::Bool};
+use z3::{Params, ast::Bool};
 
 fn main() {
     let deadline = deadline();
@@ -263,7 +263,7 @@ impl<'a> Checker<'a> {
             }
         }
 
-        let s = Solver::new();
+        let s = interpreter::new_solver();
         s.set_params(self.params);
         for c in p1 {
             s.assert(c);
