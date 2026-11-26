@@ -256,13 +256,15 @@ impl<'a> Checker<'a> {
             }
         });
         if inputs_eq {
-            if let ExeResult::Ok(Some((o1, _))) = r1
+            let outputs_eq = if let ExeResult::Ok(Some((o1, _))) = r1
                 && let ExeResult::Ok(Some((o2, _))) = r2
-                && o1.are_concrete_equal(o2)
             {
-                return Some(true);
+                o1.are_concrete_equal(o2)
             } else {
                 // in all other cases the outputs are not equal since they were checked above
+                false
+            };
+            if !outputs_eq {
                 return Some(false);
             }
         }
