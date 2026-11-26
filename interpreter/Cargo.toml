@@ -8,6 +8,7 @@ serde_json = {version = "1.0.151", features = ["arbitrary_precision"]}
 regex = "1.13.1"
 z3 = "0.22.0"
 z3-sys = "0.14.0"
+rayon = "1.12"
 
 [lib]
 

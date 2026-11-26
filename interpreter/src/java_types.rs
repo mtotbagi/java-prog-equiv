@@ -434,11 +434,9 @@ impl Constant {
             Constant::Long(v) => StackValue::Long(*v, BV::from_i64(*v, 64)),
             Constant::Float(v) => StackValue::Float(*v, Float::from_f32(*v)),
             Constant::Double(v) => StackValue::Double(*v, Float::from_f64(*v)),
-            Constant::Null => StackValue::Ref(
-                None,
-                z3::ast::Bool::from_bool(false),
-                BV::from_u64(0, 32),
-            ),
+            Constant::Null => {
+                StackValue::Ref(None, z3::ast::Bool::from_bool(false), BV::from_u64(0, 32))
+            }
             Constant::String(_) => unreachable!("string constants are pushed to the heap"),
         }
     }

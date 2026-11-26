@@ -1,4 +1,8 @@
-use std::{env, fmt::Display};
+use std::{
+    env,
+    fmt::Display,
+    time::{Duration, Instant},
+};
 
 use interpreter::*;
 use serde_json::Value;
@@ -47,7 +51,11 @@ fn main() {
     };
 
     let executor = ConcolicExecutor::new(class);
-    let res: Vec<_> = executor.into_iter(&method, 1000).take(100).collect();
+    let deadline = Instant::now() + Duration::from_secs(4);
+    let res: Vec<_> = executor
+        .into_iter(&method, 1000, deadline, 1)
+        .take(100)
+        .collect();
     use std::collections::HashSet;
     use std::mem::discriminant;
     dbg!(res.clone());
