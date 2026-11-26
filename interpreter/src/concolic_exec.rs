@@ -6,8 +6,10 @@
 //! As z3 is not thread-safe, no symbolic data is being passed between threads,
 //! they are recomputed (cheaply) by interpreting the input they were generated from the first time.
 use std::{
+    cmp::Ordering,
+    collections::BinaryHeap,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering::Relaxed},
         mpsc::{self, Receiver, RecvTimeoutError, Sender},
     },
@@ -92,12 +94,13 @@ impl ConcolicExecutor {
             deadline,
             stop: stop.clone(),
             tx,
+            queue: Mutex::default(),
         };
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(workers.max(1))
             .build()
             .unwrap();
-        let producer = thread::spawn(move || pool.scope(|s| explorer.visit(s, WorkItem::Root)));
+        let producer = thread::spawn(move || pool.scope(|s| explorer.push(s, 0, WorkItem::Root)));
         ConcolicPathsIter {
             rx,
             initial_input,
@@ -163,6 +166,38 @@ enum WorkItem {
     Flip { parent: ConcreteInput, index: usize },
 }
 
+/// A work item waiting in the queue. The highest `weight` is explored first;
+struct Queued {
+    weight: u64,
+    item: WorkItem,
+}
+
+impl Queued {
+    fn key(&self) -> u64 {
+        self.weight
+    }
+}
+
+impl PartialEq for Queued {
+    fn eq(&self, other: &Self) -> bool {
+        self.key() == other.key()
+    }
+}
+
+impl Eq for Queued {}
+
+impl PartialOrd for Queued {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Queued {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.key().cmp(&other.key())
+    }
+}
+
 /// Explores the paths on a rayon pool, sending the input found for each one.
 struct Explorer {
     executor: ConcolicExecutor,
@@ -172,10 +207,27 @@ struct Explorer {
     /// Set when the consumer is gone.
     stop: Arc<AtomicBool>,
     tx: Sender<ConcreteInput>,
+    /// The items waiting to be explored, by priority.
+    queue: Mutex<BinaryHeap<Queued>>,
 }
 
 impl Explorer {
-    /// Explores `item`, and spawns a task for each path found from it.
+    /// Queues `item`, and spawns a task to explore the highest priority queued item.
+    ///
+    /// Every push spawns exactly one task and every task pops exactly one item,
+    /// so a task never finds the queue empty, and the scope ends when the queue does.
+    fn push<'s>(&'s self, scope: &rayon::Scope<'s>, weight: u64, item: WorkItem) {
+        {
+            let mut queue = self.queue.lock().unwrap();
+            queue.push(Queued { weight, item });
+        }
+        scope.spawn(move |s| {
+            let next = self.queue.lock().unwrap().pop().unwrap();
+            self.visit(s, next.item);
+        });
+    }
+
+    /// Explores `item`, and queues the paths found from it.
     fn visit<'s>(&'s self, scope: &rayon::Scope<'s>, item: WorkItem) {
         // If deadline has passed or the iterator has been dropped
         if self.stop.load(Relaxed) || Instant::now() >= self.deadline {
@@ -184,18 +236,22 @@ impl Explorer {
         let Some((input, children)) = self.explore(item) else {
             return;
         };
-        // The last task spawned runs first, so the children are explored in order.
-        for child in children {
-            scope.spawn(move |s| self.visit(s, child));
+        for (weight, child) in children {
+            self.push(scope, weight, child);
         }
         if self.tx.send(input).is_err() {
             self.stop.store(true, Relaxed);
         }
     }
 
-    /// Returns the input on the path `item` describes, and the paths to explore from it,
-    /// or `None` if no input follows that path.
-    fn explore(&self, item: WorkItem) -> Option<(ConcreteInput, Vec<WorkItem>)> {
+    /// Priority of flipping condition `index` of `path`: higher is explored first.
+    fn weight(&self, _path: &[Bool], index: usize) -> u64 {
+        u64::MAX - (index as u64 + 1)
+    }
+
+    /// Returns the input on the path `item` describes, and the weighted paths to explore
+    /// from it, or `None` if no input follows that path.
+    fn explore(&self, item: WorkItem) -> Option<(ConcreteInput, Vec<(u64, WorkItem)>)> {
         // Made on every call: z3 terms belong to the thread that created them.
         let initial = self.executor.initial_input(&self.method).unwrap();
         let (input, depth) = match item {
@@ -222,9 +278,12 @@ impl Explorer {
         let input = to_concrete(&input);
         let children = (depth..path.len())
             .rev()
-            .map(|index| WorkItem::Flip {
-                parent: input.clone(),
-                index,
+            .map(|index| {
+                let child = WorkItem::Flip {
+                    parent: input.clone(),
+                    index,
+                };
+                (self.weight(&path, index), child)
             })
             .collect();
         Some((input, children))
