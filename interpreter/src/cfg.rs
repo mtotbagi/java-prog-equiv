@@ -1,17 +1,19 @@
 use crate::{
-    instruction::{Instruction, Op},
-    java_class::Method,
+    instruction::{Access, Instruction, Op},
+    java_class::{Class, Method},
+    java_types::SimpleRef,
 };
 
+// CFG = control flow graph
 #[derive(Debug)]
-// control flow graph
-pub struct CFG {
+pub struct MethodCFG {
     pub nodes: Vec<CfgNode>,
+    //method: Method,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct CfgNode {
-    pub backedges: Option<u32>,
+    pub backedges: u32,
     pub node_type: CfgNodeType,
 }
 
@@ -19,123 +21,224 @@ pub struct CfgNode {
 pub enum CfgNodeType {
     Branch(usize, usize),
     Jump(usize),
+    // the return node, and the backedges in the called method
+    Call(usize, u32),
     End,
 }
 
-impl CFG {
-    pub fn from_instructions(instructions: &[Instruction]) -> Option<Self> {
-        let mut res = Self {
-            nodes: vec![
-                CfgNode {
-                    backedges: None,
-                    node_type: CfgNodeType::End
-                };
-                instructions.len() + 1
-            ],
-        };
-        for (offset, instruction) in instructions.iter().enumerate() {
-            match instruction {
-                Instruction::Load { .. }
-                | Instruction::Push { .. }
-                | Instruction::Dup { .. }
-                | Instruction::Store { .. }
-                | Instruction::New { .. }
-                | Instruction::NoOp { .. }
-                | Instruction::DupX2 { .. }
-                | Instruction::Incr { .. }
-                | Instruction::Neg { .. }
-                | Instruction::Put { .. }
-                | Instruction::CompareFloat { .. }
-                | Instruction::CompareLong { .. }
-                | Instruction::BitOpr { .. }
-                | Instruction::Get { .. }
-                | Instruction::Cast { .. } => {
-                    res.nodes[offset].node_type = CfgNodeType::Jump(offset + 1)
-                }
-                Instruction::Throw { .. } | Instruction::Return { .. } => {
-                    res.nodes[offset].node_type = CfgNodeType::Jump(res.nodes.len() - 1)
-                }
-                Instruction::Ifz { target, .. } => {
-                    res.nodes[offset].node_type = CfgNodeType::Branch(offset + 1, *target as usize)
-                }
-                Instruction::Invoke { .. } => return None,
-                Instruction::Binary { op, .. } => {
-                    let can_div0 = matches!(op, Op::Div | Op::Rem);
-                    if can_div0 {
-                        res.nodes[offset].node_type =
-                            CfgNodeType::Branch(offset + 1, res.nodes.len() - 1);
+impl MethodCFG {
+    fn count_backedges(&mut self) {
+        for offset in (0..self.nodes.len()).rev() {
+            match self.nodes[offset].node_type {
+                CfgNodeType::Branch(a, b) => {
+                    if offset < a {
+                        self.nodes[offset].backedges += self.nodes[a].backedges;
                     } else {
-                        res.nodes[offset].node_type = CfgNodeType::Jump(offset + 1);
+                        self.nodes[offset].backedges += 1;
+                    }
+
+                    if offset < b {
+                        self.nodes[offset].backedges += self.nodes[b].backedges;
+                    } else {
+                        self.nodes[offset].backedges += 1;
                     }
                 }
-                Instruction::If { target, .. } => {
-                    res.nodes[offset].node_type = CfgNodeType::Branch(offset + 1, *target as usize)
+                CfgNodeType::Jump(a) => {
+                    if offset < a {
+                        self.nodes[offset].backedges = self.nodes[a].backedges;
+                    } else {
+                        self.nodes[offset].backedges = 1;
+                    }
                 }
-                Instruction::Goto { target } => {
-                    res.nodes[offset].node_type = CfgNodeType::Jump(*target as usize)
+                CfgNodeType::Call(a, invoked_backedges) => {
+                    if offset < a {
+                        self.nodes[offset].backedges = self.nodes[a].backedges + invoked_backedges;
+                    } else {
+                        self.nodes[offset].backedges = 1 + invoked_backedges;
+                    }
                 }
-                Instruction::Placeholder { .. } => todo!(),
-                Instruction::NewArray { .. } => {
-                    res.nodes[offset].node_type =
-                        CfgNodeType::Branch(offset + 1, res.nodes.len() - 1)
-                } // if length is greater than LIMIT reaches DidNotFinish otherwise continues
-                Instruction::ArrayStore { .. } => {
-                    res.nodes[offset].node_type =
-                        CfgNodeType::Branch(offset + 1, res.nodes.len() - 1)
-                } // if array is nullpointer or out of bounds we fail
-                Instruction::ArrayLength { .. } => {
-                    res.nodes[offset].node_type =
-                        CfgNodeType::Branch(offset + 1, res.nodes.len() - 1)
-                } // if array is nullpointer we fail
-                Instruction::ArrayLoad { .. } => {
-                    res.nodes[offset].node_type =
-                        CfgNodeType::Branch(offset + 1, res.nodes.len() - 1)
-                } // if array is nullpointer or out of bounds we fail
+                CfgNodeType::End => self.nodes[offset].backedges = 0,
             }
-        }
-        res.count_backedges(0);
-        Some(res)
-    }
-
-    fn count_backedges(&mut self, offset: usize) {
-        if self.nodes[offset].backedges != None {
-            return;
-        }
-
-        match self.nodes[offset].node_type {
-            CfgNodeType::Branch(a, b) => {
-                let mut backedges_count = 0;
-                if offset < a {
-                    self.count_backedges(a);
-                    let Some(a_backedges) = self.nodes[a].backedges else {
-                        panic!();
-                    };
-                    backedges_count += a_backedges;
-                } else {
-                    backedges_count += 1;
-                }
-
-                if offset < b {
-                    self.count_backedges(b);
-                    let Some(b_backedges) = self.nodes[b].backedges else {
-                        panic!();
-                    };
-                    backedges_count += b_backedges;
-                } else {
-                    backedges_count += 1;
-                }
-
-                self.nodes[offset].backedges = Some(backedges_count);
-            }
-            CfgNodeType::Jump(a) => {
-                if offset < a {
-                    self.count_backedges(a);
-                    self.nodes[offset].backedges = self.nodes[a].backedges;
-                } else {
-                    self.nodes[offset].backedges = Some(1);
-                }
-            }
-            CfgNodeType::End => self.nodes[offset].backedges = Some(0),
         }
     }
+}
+
+pub fn get_cfgs(class: &Class, method: &Method) -> Option<Vec<Option<MethodCFG>>> {
+    let mut method_cfgs: Vec<_> = class
+        .methods
+        .iter()
+        .map(|m| (m.clone(), (false, None)))
+        .collect();
+    let Some(m_indx) = method_cfgs.iter().position(|x| x.0.id == method.id) else {
+        panic!()
+    };
+    fill_method_cfg(&mut method_cfgs, &class.name, m_indx);
+    if method_cfgs[m_indx].1.1.is_none() {
+        None
+    } else {
+        Some(method_cfgs.into_iter().map(|(_, (_, cfg))| cfg).collect())
+    }
+}
+
+fn fill_method_cfg(
+    method_cfgs: &mut Vec<(Method, (bool, Option<MethodCFG>))>,
+    current_class_name: &str,
+    m_indx: usize,
+) {
+    let started = method_cfgs[m_indx].1.0;
+    if started {
+        // we do not handle mutual recursion
+        method_cfgs[m_indx].1.1 = None;
+        return;
+    }
+    method_cfgs[m_indx].1.0 = true;
+    let method = method_cfgs[m_indx].0.clone();
+
+    let mut res = MethodCFG {
+        nodes: vec![
+            CfgNode {
+                backedges: 0,
+                node_type: CfgNodeType::End
+            };
+            method.instructions.len() + 1
+        ],
+    };
+    for (offset, instruction) in method.instructions.iter().enumerate() {
+        match instruction {
+            Instruction::Load { .. }
+            | Instruction::Push { .. }
+            | Instruction::Dup { .. }
+            | Instruction::Store { .. }
+            | Instruction::New { .. }
+            | Instruction::NoOp
+            | Instruction::DupX2
+            | Instruction::Incr { .. }
+            | Instruction::Neg { .. }
+            | Instruction::Put { .. }
+            | Instruction::CompareFloat { .. }
+            | Instruction::CompareLong
+            | Instruction::BitOpr { .. }
+            | Instruction::Get { .. }
+            | Instruction::Cast { .. } => {
+                res.nodes[offset].node_type = CfgNodeType::Jump(offset + 1)
+            }
+            Instruction::Throw | Instruction::Return { .. } => {
+                res.nodes[offset].node_type = CfgNodeType::Jump(res.nodes.len() - 1)
+            }
+            Instruction::Ifz { target, .. } => {
+                res.nodes[offset].node_type = CfgNodeType::Branch(offset + 1, *target as usize)
+            }
+            Instruction::Invoke {
+                access,
+                method_id,
+                simple_ref,
+            } => {
+                assert!(matches!(
+                    access,
+                    Access::Static | Access::Special | Access::Virtual
+                ));
+                // eprintln!("{}", method_id.name);
+                // If this is not a method of the class, it's one of the special cases
+                // Or it's unhandled and we panic
+                let classname = match simple_ref {
+                    SimpleRef::Class { name } => name,
+                    SimpleRef::Array { ty: _ } => {
+                        method_cfgs[m_indx].1.1 = None;
+                        return;
+                    }
+                };
+                let methodname = method_id.name.as_str();
+                if current_class_name != *classname {
+                    if ((classname == "java/lang/AssertionError"
+                        || classname == "java/lang/Object")
+                        && methodname == "<init>")
+                        || (classname == "java/lang/Math"
+                            && [
+                                "abs",
+                                "sqrt",
+                                "min",
+                                "max",
+                                "floor",
+                                "ceil",
+                                "rint",
+                                "getExponent",
+                                "log",
+                                "exp",
+                                "pow",
+                                "sin",
+                                "cos",
+                                "tan",
+                                "atan",
+                                "cosh",
+                                "tanh",
+                            ]
+                            .contains(&methodname))
+                        || (classname == "java/lang/Double"
+                            && ["doubleToRawLongBits", "longBitsToDouble"].contains(&methodname))
+                    {
+                        res.nodes[offset].node_type = CfgNodeType::Jump(offset + 1);
+                    } else {
+                        eprintln!("{:?}", methodname);
+                        method_cfgs[m_indx].1.1 = None;
+                        return;
+                    }
+                } else {
+                    if method.id == *method_id {
+                        res.nodes[offset].node_type = CfgNodeType::Jump(0);
+                    } else {
+                        let Some(invoked_indx) =
+                            method_cfgs.iter().position(|x| x.0.id == *method_id)
+                        else {
+                            panic!()
+                        };
+                        /*
+                        dbg!(&method.id.name);
+                        dbg!(invoked_indx, &self.method_cfgs);
+                        */
+                        let started = method_cfgs[invoked_indx].1.0;
+                        if !started {
+                            fill_method_cfg(method_cfgs, current_class_name, invoked_indx);
+                        }
+                        let Some(ref invoked_cfg) = method_cfgs[invoked_indx].1.1 else {
+                            method_cfgs[m_indx].1.1 = None;
+                            return;
+                        };
+                        let invoked_backedges = invoked_cfg.nodes[0].backedges;
+                        res.nodes[offset].node_type =
+                            CfgNodeType::Call(offset + 1, invoked_backedges);
+                    }
+                }
+            }
+            Instruction::Binary { op, .. } => {
+                let can_div0 = matches!(op, Op::Div | Op::Rem);
+                if can_div0 {
+                    res.nodes[offset].node_type =
+                        CfgNodeType::Branch(offset + 1, res.nodes.len() - 1);
+                } else {
+                    res.nodes[offset].node_type = CfgNodeType::Jump(offset + 1);
+                }
+            }
+            Instruction::If { target, .. } => {
+                res.nodes[offset].node_type = CfgNodeType::Branch(offset + 1, *target as usize)
+            }
+            Instruction::Goto { target } => {
+                res.nodes[offset].node_type = CfgNodeType::Jump(*target as usize)
+            }
+            Instruction::Placeholder => todo!(),
+            Instruction::NewArray { .. } => {
+                res.nodes[offset].node_type = CfgNodeType::Branch(offset + 1, res.nodes.len() - 1)
+            } // if length is greater than LIMIT reaches DidNotFinish otherwise continues
+            Instruction::ArrayStore { .. } => {
+                res.nodes[offset].node_type = CfgNodeType::Branch(offset + 1, res.nodes.len() - 1)
+            } // if array is nullpointer or out of bounds we fail
+            Instruction::ArrayLength => {
+                res.nodes[offset].node_type = CfgNodeType::Branch(offset + 1, res.nodes.len() - 1)
+            } // if array is nullpointer we fail
+            Instruction::ArrayLoad { .. } => {
+                res.nodes[offset].node_type = CfgNodeType::Branch(offset + 1, res.nodes.len() - 1)
+            } // if array is nullpointer or out of bounds we fail
+        }
+    }
+    res.count_backedges();
+    method_cfgs[m_indx].1.1 = Some(res);
 }
