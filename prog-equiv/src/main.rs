@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     env,
     fs::File,
     io::BufReader,
@@ -13,7 +14,10 @@ use eqbench::{
 use interpreter::{
     Class, ExeResult, FromJson, Input, Interpreter, Method, Run, concolic_paths, next_input,
 };
-use z3::{SatResult, Solver, ast::Bool};
+use z3::{
+    DeclKind, SatResult, Solver,
+    ast::{Ast, Bool},
+};
 
 fn main() {
     let deadline = deadline();
@@ -263,6 +267,11 @@ impl Checker<'_> {
         if same_input && results_differ(r1, r2) {
             return Some(false);
         }
+        
+        if trivially_disjoint(p1, p2) {
+            // No input follows both paths.
+            return Some(true);
+        }
 
         let s = interpreter::new_solver();
         for c in p1.iter().chain(p2) {
@@ -316,4 +325,21 @@ impl Checker<'_> {
         let (_, _, new) = self.new.interpret(self.method, input, STEP_COUNT);
         (old, new)
     }
+}
+
+/// `(not a)` -> (a, false); anything else -> (b, true).
+fn literal(b: &Bool) -> (Bool, bool) {
+    if b.safe_decl().is_ok_and(|d| d.kind() == DeclKind::Not) {
+        (b.nth_child(0).unwrap().as_bool().unwrap(), false)
+    } else {
+        (b.clone(), true)
+    }
+}
+
+/// Some constraint in `p1` is the syntactic negation of one in `p2`.
+fn trivially_disjoint(p1: &[Bool], p2: &[Bool]) -> bool {
+    let lits: HashSet<(Bool, bool)> = p1.iter().map(literal).collect();
+    p2.iter()
+        .map(literal)
+        .any(|(atom, pol)| lits.contains(&(atom, !pol)))
 }
