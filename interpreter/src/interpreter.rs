@@ -24,6 +24,20 @@ impl Interpreter {
         Interpreter { class, cfgs }
     }
 
+    fn weight(&self, m_indx: usize, idx: usize) -> u32 {
+        self.method_weights(m_indx).map_or(0, |w| w[idx])
+    }
+
+    fn method_weights(&self, m_indx: usize) -> Option<&[u32]> {
+        self.cfgs.as_ref()?[m_indx].as_deref()
+    }
+
+    fn exit_weight(&self, m_indx: usize) -> u32 {
+        self.method_weights(m_indx)
+            .and_then(|w| w.last().copied())
+            .unwrap_or(0)
+    }
+
     fn init_class(&self, mut state: State) -> State {
         let Some(clinit) = self.class.methods.iter().find(|m| m.id.name == "<clinit>") else {
             return state;
@@ -157,11 +171,9 @@ impl Interpreter {
                 };
                 let mut target_priority: u32 = cur_frame.context_priority;
                 let mut next_priority: u32 = cur_frame.context_priority;
-                if let Some(ref cfgs) = self.cfgs {
-                    // we are interested in the weight we get if we negate the constraint
-                    next_priority += cfgs[m_indx].as_ref().unwrap()[*target as usize];
-                    target_priority += cfgs[m_indx].as_ref().unwrap()[cur_frame.pc() + 1];
-                }
+                // we are interested in the weight we get if we negate the constraint
+                next_priority += self.weight(m_indx, *target as usize);
+                target_priority += self.weight(m_indx, cur_frame.pc() + 1);
                 if real_bool {
                     cur_frame.set_pc(*target);
                     state.frames.push(cur_frame);
@@ -388,7 +400,7 @@ impl Interpreter {
                     return (Either::State(state), None);
                 }
             }
-            Instruction::Binary { op, ty: _ } => {
+            Instruction::Binary { op, ty } => {
                 let rhs = cur_frame.stack.pop().unwrap();
                 let lhs = cur_frame.stack.pop().unwrap();
                 let (op_res, is_rhs_zero) = match (lhs, rhs) {
@@ -419,14 +431,13 @@ impl Interpreter {
                     _ => panic!("Invalid types"),
                 };
                 // Only add contraint if division can fail
-                let can_div0 = matches!(op, Op::Div | Op::Rem) && matches!(ty, StackType::Int | StackType::Long);
+                let can_div0 = matches!(op, Op::Div | Op::Rem)
+                    && matches!(ty, StackType::Int | StackType::Long);
                 let mut div0_priority: u32 = cur_frame.context_priority;
                 let mut next_priority: u32 = cur_frame.context_priority;
-                if let Some(ref cfgs) = self.cfgs {
-                    // we are interested in the weight we get if we negate the constraint
-                    next_priority += *cfgs[m_indx].as_ref().unwrap().last().unwrap();
-                    div0_priority += cfgs[m_indx].as_ref().unwrap()[cur_frame.pc() + 1];
-                }
+                // we are interested in the weight we get if we negate the constraint
+                next_priority += self.exit_weight(m_indx);
+                div0_priority += self.weight(m_indx, cur_frame.pc() + 1);
                 match op_res {
                     Some(result) => {
                         cur_frame.stack.push(result);
@@ -459,11 +470,9 @@ impl Interpreter {
 
                 let mut target_priority: u32 = cur_frame.context_priority;
                 let mut next_priority: u32 = cur_frame.context_priority;
-                if let Some(ref cfgs) = self.cfgs {
-                    // we are interested in the weight we get if we negate the constraint
-                    next_priority += cfgs[m_indx].as_ref().unwrap()[*target as usize];
-                    target_priority += cfgs[m_indx].as_ref().unwrap()[cur_frame.pc() + 1];
-                }
+
+                next_priority += self.weight(m_indx, *target as usize);
+                target_priority += self.weight(m_indx, cur_frame.pc() + 1);
 
                 if real_bool {
                     cur_frame.set_pc(*target);
@@ -491,11 +500,9 @@ impl Interpreter {
                 }
                 let mut fail_priority: u32 = cur_frame.context_priority;
                 let mut next_priority: u32 = cur_frame.context_priority;
-                if let Some(ref cfgs) = self.cfgs {
-                    // we are interested in the weight we get if we negate the constraint
-                    next_priority += *cfgs[m_indx].as_ref().unwrap().last().unwrap();
-                    fail_priority += cfgs[m_indx].as_ref().unwrap()[cur_frame.pc() + 1];
-                }
+
+                next_priority += self.exit_weight(m_indx);
+                fail_priority += self.weight(m_indx, cur_frame.pc() + 1);
                 let len = cur_frame.stack.pop().unwrap();
                 let StackValue::Int(l, bv) = &len else {
                     panic!("Invalid stackvalue, should be Int!")
@@ -549,11 +556,9 @@ impl Interpreter {
                 };
                 let mut fail_priority: u32 = cur_frame.context_priority;
                 let mut next_priority: u32 = cur_frame.context_priority;
-                if let Some(ref cfgs) = self.cfgs {
-                    // we are interested in the weight we get if we negate the constraint
-                    next_priority += *cfgs[m_indx].as_ref().unwrap().last().unwrap();
-                    fail_priority += cfgs[m_indx].as_ref().unwrap()[cur_frame.pc() + 1];
-                }
+
+                next_priority += self.exit_weight(m_indx);
+                fail_priority += self.weight(m_indx, cur_frame.pc() + 1);
                 let is_null_pointer = sym_is_valid.eq(z3_false());
                 let Some(arr) = arr_ref else {
                     return (
@@ -607,11 +612,9 @@ impl Interpreter {
                 };
                 let mut fail_priority: u32 = cur_frame.context_priority;
                 let mut next_priority: u32 = cur_frame.context_priority;
-                if let Some(ref cfgs) = self.cfgs {
-                    // we are interested in the weight we get if we negate the constraint
-                    next_priority += *cfgs[m_indx].as_ref().unwrap().last().unwrap();
-                    fail_priority += cfgs[m_indx].as_ref().unwrap()[cur_frame.pc() + 1];
-                }
+
+                next_priority += self.exit_weight(m_indx);
+                fail_priority += self.weight(m_indx, cur_frame.pc() + 1);
 
                 let Some(arr) = arr_ref else {
                     return (
