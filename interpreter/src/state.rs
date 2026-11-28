@@ -78,6 +78,7 @@ pub struct Frame {
     pub stack: Vec<StackValue>,
     pub locals: Vec<Option<StackValue>>,
     pub program_counter: ProgramCounter,
+    pub context_priority: u32,
 }
 
 impl Frame {
@@ -95,6 +96,7 @@ impl Frame {
             stack: vec![],
             locals,
             program_counter,
+            context_priority: 0,
         }
     }
 

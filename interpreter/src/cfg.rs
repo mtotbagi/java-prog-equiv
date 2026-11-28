@@ -63,7 +63,9 @@ impl MethodCFG {
     }
 }
 
-pub fn get_cfgs(class: &Class, method: &Method) -> Option<Vec<Option<MethodCFG>>> {
+pub type CFGsWeights = Vec<Option<Vec<u32>>>;
+
+pub fn instruction_weights(class: &Class, method: &Method) -> Option<CFGsWeights> {
     let mut method_cfgs: Vec<_> = class
         .methods
         .iter()
@@ -76,7 +78,14 @@ pub fn get_cfgs(class: &Class, method: &Method) -> Option<Vec<Option<MethodCFG>>
     if method_cfgs[m_indx].1.1.is_none() {
         None
     } else {
-        Some(method_cfgs.into_iter().map(|(_, (_, cfg))| cfg).collect())
+        Some(
+            method_cfgs
+                .into_iter()
+                .map(|(_, (_, cfg_opt))| {
+                    cfg_opt.map(|cfg| cfg.nodes.into_iter().map(|node| node.backedges).collect())
+                })
+                .collect(),
+        )
     }
 }
 

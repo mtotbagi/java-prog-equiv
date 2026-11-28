@@ -23,6 +23,7 @@ use z3::{
 };
 
 use crate::*;
+use cfg::instruction_weights;
 
 pub type Input = (Vec<StackValue>, Heap);
 pub type Run = (Input, Vec<Bool>, ExeResult);
@@ -44,8 +45,9 @@ pub fn concolic_paths(
     deadline: Instant,
     workers: usize,
 ) -> impl Iterator<Item = Run> {
+    let weights = instruction_weights(&class, method);
     let runner = Runner {
-        interpreter: Interpreter::new(class),
+        interpreter: Interpreter::new_with_cfgs(class, weights),
         method: method.clone(),
         step_count,
     };
@@ -117,7 +119,7 @@ impl Runner {
         (args, Heap { heap })
     }
 
-    fn run(&self, input: Input) -> (Vec<Bool>, ExeResult) {
+    fn run(&self, input: Input) -> (Vec<(Bool, u32)>, ExeResult) {
         let (_, path, result) = self
             .interpreter
             .interpret(&self.method, input, self.step_count);
@@ -243,8 +245,8 @@ impl Explorer {
     }
 
     /// Priority of flipping condition `index` of `path`: higher is explored first.
-    fn weight(&self, _path: &[Bool], index: usize) -> u64 {
-        u64::MAX - (index as u64 + 1)
+    fn weight(&self, path: &[(Bool, u32)], index: usize) -> u64 {
+        u64::MAX - (index as u64 + 1) - path[index].1 as u64
     }
 
     /// Returns the input on the path `item` describes, and the weighted paths to explore
@@ -276,12 +278,12 @@ impl Explorer {
     }
 }
 
-fn flip(path: &[Bool], index: usize) -> Option<Model> {
+fn flip(path: &[(Bool, u32)], index: usize) -> Option<Model> {
     let solver = new_solver();
-    for c in &path[..index] {
+    for (c, _) in &path[..index] {
         solver.assert(c);
     }
-    solver.assert(path[index].not());
+    solver.assert(path[index].0.not());
     match solver.check() {
         SatResult::Sat => solver.get_model(),
         _ => None,
@@ -320,6 +322,7 @@ impl Iterator for ConcolicPathsIter {
         };
         let input = from_concrete(&self.initial_input, &concrete);
         let (path, result) = self.runner.run(input.clone());
+        let path = path.into_iter().map(|(c, _)| c).collect();
         Some((input, path, result))
     }
 }

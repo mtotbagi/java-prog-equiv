@@ -10,13 +10,18 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct Interpreter {
     class: Class,
+    cfgs: Option<CFGsWeights>,
 }
 impl Interpreter {
     pub fn class(&self) -> &Class {
         &self.class
     }
     pub fn new(class: Class) -> Self {
-        Interpreter { class }
+        Interpreter { class, cfgs: None }
+    }
+
+    pub fn new_with_cfgs(class: Class, cfgs: Option<CFGsWeights>) -> Self {
+        Interpreter { class, cfgs }
     }
 
     fn init_class(&self, mut state: State) -> State {
@@ -53,7 +58,7 @@ impl Interpreter {
         method: &Method,
         input: (Vec<StackValue>, Heap),
         iter: u32,
-    ) -> (Vec<State>, Vec<z3::ast::Bool>, ExeResult) {
+    ) -> (Vec<State>, Vec<(z3::ast::Bool, u32)>, ExeResult) {
         let pc = ProgramCounter {
             class: self.class.name.clone(),
             method: method.id.clone(),
@@ -100,18 +105,20 @@ impl Interpreter {
         (states, path, ExeResult::DidNotFinish)
     }
 
-    fn step(&self, mut state: State) -> (Either, Option<z3::ast::Bool>) {
+    fn step(&self, mut state: State) -> (Either, Option<(z3::ast::Bool, u32)>) {
         let Some(mut cur_frame) = state.frames.pop() else {
             panic!("Empty state!")
         };
-        let bytecode = self
+        let Some(m_indx) = self
             .class
             .methods
             .iter()
-            .filter(|m| m.id == cur_frame.program_counter.method)
-            .map(|m| &m.instructions)
-            .next()
-            .unwrap();
+            .position(|m| m.id == cur_frame.program_counter.method)
+        else {
+            panic!()
+        };
+
+        let bytecode = &self.class.methods[m_indx].instructions;
         // dbg!(&bytecode[cur_frame.pc()]);
         match &bytecode[cur_frame.pc()] {
             Instruction::Load { ty, index } => cur_frame.load(*ty, *index),
@@ -133,29 +140,36 @@ impl Interpreter {
                 let (real_bool, sym_bool) = match cur_frame.stack.pop() {
                     Some(StackValue::Int(i, bv)) => (
                         cond.cmp_i32(i, 0),
-                        Some(cond.cmp_z3_signed(&bv, &z3::ast::BV::from_i64(0, 32))),
+                        cond.cmp_z3_signed(&bv, &z3::ast::BV::from_i64(0, 32)),
                     ),
                     Some(StackValue::Ref(r, sym_is_null, sym_bv)) => (
                         cond.cmp_ref(r, None),
-                        Some(cond.cmp_z3_ref(
+                        cond.cmp_z3_ref(
                             (&sym_is_null, &sym_bv),
                             (
                                 &z3::ast::Bool::from_bool(false),
                                 &z3::ast::BV::from_u64(0, 32),
                             ),
-                        )),
+                        ),
                     ),
                     Some(_) => panic!(),
                     None => panic!(),
                 };
+                let mut target_priority: u32 = cur_frame.context_priority;
+                let mut next_priority: u32 = cur_frame.context_priority;
+                if let Some(ref cfgs) = self.cfgs {
+                    // we are interested in the weight we get if we negate the constraint
+                    next_priority += cfgs[m_indx].as_ref().unwrap()[*target as usize];
+                    target_priority += cfgs[m_indx].as_ref().unwrap()[cur_frame.pc() + 1];
+                }
                 if real_bool {
                     cur_frame.set_pc(*target);
                     state.frames.push(cur_frame);
-                    return (Either::State(state), sym_bool);
+                    return (Either::State(state), Some((sym_bool, target_priority)));
                 } else {
                     cur_frame.increment_pc();
                     state.frames.push(cur_frame);
-                    return (Either::State(state), sym_bool.map(|b| b.not()));
+                    return (Either::State(state), Some((sym_bool.not(), next_priority)));
                 }
             }
             Instruction::Store { ty, index } => cur_frame.store(*ty, *index),
@@ -362,7 +376,12 @@ impl Interpreter {
                         .stack
                         .drain(cur_frame.stack.len() - n_args..)
                         .collect();
-                    let new_frame = Frame::new(new_pc, new_locals);
+                    let mut new_context_priority: u32 = cur_frame.context_priority;
+                    if let Some(ref cfgs) = self.cfgs {
+                        new_context_priority += cfgs[m_indx].as_ref().unwrap()[cur_frame.pc() + 1];
+                    }
+                    let mut new_frame = Frame::new(new_pc, new_locals);
+                    new_frame.context_priority = new_context_priority;
                     cur_frame.increment_pc();
                     state.frames.push(cur_frame);
                     state.frames.push(new_frame);
@@ -401,42 +420,59 @@ impl Interpreter {
                 };
                 // Only add contraint if division can fail
                 let can_div0 = matches!(op, Op::Div | Op::Rem);
+                let mut div0_priority: u32 = cur_frame.context_priority;
+                let mut next_priority: u32 = cur_frame.context_priority;
+                if let Some(ref cfgs) = self.cfgs {
+                    // we are interested in the weight we get if we negate the constraint
+                    next_priority += *cfgs[m_indx].as_ref().unwrap().last().unwrap();
+                    div0_priority += cfgs[m_indx].as_ref().unwrap()[cur_frame.pc() + 1];
+                }
                 match op_res {
                     Some(result) => {
                         cur_frame.stack.push(result);
                         cur_frame.increment_pc();
                         state.frames.push(cur_frame);
-                        return (Either::State(state), can_div0.then(|| is_rhs_zero.not()));
+                        return (
+                            Either::State(state),
+                            can_div0.then(|| (is_rhs_zero.not(), next_priority)),
+                        );
                     }
-                    None => return (Either::Result(Div0), Some(is_rhs_zero)),
+                    None => return (Either::Result(Div0), Some((is_rhs_zero, div0_priority))),
                 }
             }
             Instruction::If { cond, target } => {
                 let rhs = cur_frame.stack.pop().unwrap();
                 let lhs = cur_frame.stack.pop().unwrap();
                 let (real_bool, sym_bool) = match (lhs, rhs) {
-                    (StackValue::Int(lhs, lhs_bv), StackValue::Int(rhs, rhs_bv)) => (
-                        cond.cmp_i32(lhs, rhs),
-                        Some(cond.cmp_z3_signed(&lhs_bv, &rhs_bv)),
-                    ),
+                    (StackValue::Int(lhs, lhs_bv), StackValue::Int(rhs, rhs_bv)) => {
+                        (cond.cmp_i32(lhs, rhs), cond.cmp_z3_signed(&lhs_bv, &rhs_bv))
+                    }
                     (
                         StackValue::Ref(lhs, lhs_is_null, lhs_bv),
                         StackValue::Ref(rhs, rhs_is_null, rhs_bv),
                     ) => (
                         cond.cmp_ref(lhs, rhs),
-                        Some(cond.cmp_z3_ref((&lhs_is_null, &lhs_bv), (&rhs_is_null, &rhs_bv))),
+                        cond.cmp_z3_ref((&lhs_is_null, &lhs_bv), (&rhs_is_null, &rhs_bv)),
                     ),
                     _ => panic!("Cannot compare these types"),
                 };
 
+                let mut target_priority: u32 = cur_frame.context_priority;
+                let mut next_priority: u32 = cur_frame.context_priority;
+                if let Some(ref cfgs) = self.cfgs {
+                    // we are interested in the weight we get if we negate the constraint
+                    next_priority += cfgs[m_indx].as_ref().unwrap()[*target as usize];
+                    target_priority += cfgs[m_indx].as_ref().unwrap()[cur_frame.pc() + 1];
+                }
+
                 if real_bool {
                     cur_frame.set_pc(*target);
                     state.frames.push(cur_frame);
-                    return (Either::State(state), sym_bool);
+                    return (Either::State(state), Some((sym_bool, target_priority)));
                 } else {
                     cur_frame.increment_pc();
                     state.frames.push(cur_frame);
-                    return (Either::State(state), sym_bool.map(|b| b.not()));
+                    return (Either::State(state), Some((sym_bool.not(), next_priority)));
                 }
             }
             Instruction::Goto { target } => {
@@ -453,7 +489,13 @@ impl Interpreter {
                 if *dim != 1 {
                     todo!("Only one dimensional arrays are supported currently!");
                 }
-
+                let mut fail_priority: u32 = cur_frame.context_priority;
+                let mut next_priority: u32 = cur_frame.context_priority;
+                if let Some(ref cfgs) = self.cfgs {
+                    // we are interested in the weight we get if we negate the constraint
+                    next_priority += *cfgs[m_indx].as_ref().unwrap().last().unwrap();
+                    fail_priority += cfgs[m_indx].as_ref().unwrap()[cur_frame.pc() + 1];
+                }
                 let len = cur_frame.stack.pop().unwrap();
                 let StackValue::Int(l, bv) = &len else {
                     panic!("Invalid stackvalue, should be Int!")
@@ -461,7 +503,10 @@ impl Interpreter {
                 const LIMIT: i32 = 10000;
                 let sym_gt_limit = bv.bvsgt(LIMIT);
                 if *l > LIMIT {
-                    return (Either::Result(DidNotFinish), Some(sym_gt_limit));
+                    return (
+                        Either::Result(DidNotFinish),
+                        Some((sym_gt_limit, fail_priority)),
+                    );
                 }
 
                 let idx = state.heap.heap.len();
@@ -477,7 +522,10 @@ impl Interpreter {
 
                 cur_frame.increment_pc();
                 state.frames.push(cur_frame);
-                return (Either::State(state), Some(sym_gt_limit.not()));
+                return (
+                    Either::State(state),
+                    Some((sym_gt_limit.not(), next_priority)),
+                );
             }
             Instruction::ArrayStore { ty: _ } => {
                 let val = cur_frame
@@ -499,9 +547,19 @@ impl Interpreter {
                 else {
                     panic!("Expected a Ref");
                 };
+                let mut fail_priority: u32 = cur_frame.context_priority;
+                let mut next_priority: u32 = cur_frame.context_priority;
+                if let Some(ref cfgs) = self.cfgs {
+                    // we are interested in the weight we get if we negate the constraint
+                    next_priority += *cfgs[m_indx].as_ref().unwrap().last().unwrap();
+                    fail_priority += cfgs[m_indx].as_ref().unwrap()[cur_frame.pc() + 1];
+                }
                 let is_null_pointer = sym_is_valid.eq(z3_false());
                 let Some(arr) = arr_ref else {
-                    return (Either::Result(NullPointer), Some(is_null_pointer));
+                    return (
+                        Either::Result(NullPointer),
+                        Some((is_null_pointer, fail_priority)),
+                    );
                 };
 
                 let HeapValue::Array(Array {
@@ -518,10 +576,10 @@ impl Interpreter {
                 if idx as usize >= values.len() {
                     return (
                         Either::Result(OutOfBounds),
-                        Some(z3::ast::Bool::and(&[
-                            is_null_pointer.not(),
-                            is_out_of_bounds,
-                        ])),
+                        Some((
+                            z3::ast::Bool::and(&[is_null_pointer.not(), is_out_of_bounds]),
+                            fail_priority,
+                        )),
                     );
                 }
 
@@ -533,10 +591,10 @@ impl Interpreter {
                 state.frames.push(cur_frame);
                 return (
                     Either::State(state),
-                    Some(z3::ast::Bool::and(&[
-                        is_null_pointer.not(),
-                        is_out_of_bounds.not(),
-                    ])),
+                    Some((
+                        z3::ast::Bool::and(&[is_null_pointer.not(), is_out_of_bounds.not()]),
+                        next_priority,
+                    )),
                 );
             }
             Instruction::ArrayLength => {
@@ -547,11 +605,18 @@ impl Interpreter {
                 else {
                     panic!("Expected a Ref");
                 };
+                let mut fail_priority: u32 = cur_frame.context_priority;
+                let mut next_priority: u32 = cur_frame.context_priority;
+                if let Some(ref cfgs) = self.cfgs {
+                    // we are interested in the weight we get if we negate the constraint
+                    next_priority += *cfgs[m_indx].as_ref().unwrap().last().unwrap();
+                    fail_priority += cfgs[m_indx].as_ref().unwrap()[cur_frame.pc() + 1];
+                }
 
                 let Some(arr) = arr_ref else {
                     return (
                         Either::Result(NullPointer),
-                        Some(sym_is_valid.eq(z3_false())),
+                        Some((sym_is_valid.eq(z3_false()), fail_priority)),
                     );
                 };
 
@@ -564,7 +629,10 @@ impl Interpreter {
 
                 cur_frame.increment_pc();
                 state.frames.push(cur_frame);
-                return (Either::State(state), Some(sym_is_valid.eq(z3_true())));
+                return (
+                    Either::State(state),
+                    Some((sym_is_valid.eq(z3_true()), next_priority)),
+                );
             }
             Instruction::ArrayLoad { ty: _ } => {
                 let StackValue::Int(idx, idx_bv) = cur_frame
@@ -582,10 +650,19 @@ impl Interpreter {
                 else {
                     panic!("Expected a Ref");
                 };
-
+                let mut fail_priority: u32 = cur_frame.context_priority;
+                let mut next_priority: u32 = cur_frame.context_priority;
+                if let Some(ref cfgs) = self.cfgs {
+                    // we are interested in the weight we get if we negate the constraint
+                    next_priority += *cfgs[m_indx].as_ref().unwrap().last().unwrap();
+                    fail_priority += cfgs[m_indx].as_ref().unwrap()[cur_frame.pc() + 1];
+                }
                 let is_null_pointer = sym_is_valid.eq(z3_false());
                 let Some(arr) = arr_ref else {
-                    return (Either::Result(NullPointer), Some(is_null_pointer));
+                    return (
+                        Either::Result(NullPointer),
+                        Some((is_null_pointer, fail_priority)),
+                    );
                 };
 
                 let HeapValue::Array(Array {
@@ -602,10 +679,10 @@ impl Interpreter {
                 if idx as usize >= values.len() {
                     return (
                         Either::Result(OutOfBounds),
-                        Some(z3::ast::Bool::and(&[
-                            is_null_pointer.not(),
-                            is_out_of_bounds,
-                        ])),
+                        Some((
+                            z3::ast::Bool::and(&[is_null_pointer.not(), is_out_of_bounds]),
+                            fail_priority,
+                        )),
                     );
                 }
                 let sym_val = symbolic.select(&idx_bv);
@@ -614,10 +691,10 @@ impl Interpreter {
                 state.frames.push(cur_frame);
                 return (
                     Either::State(state),
-                    Some(z3::ast::Bool::and(&[
-                        is_null_pointer.not(),
-                        is_out_of_bounds.not(),
-                    ])),
+                    Some((
+                        z3::ast::Bool::and(&[is_null_pointer.not(), is_out_of_bounds.not()]),
+                        next_priority,
+                    )),
                 );
             }
             Instruction::Incr { index, amount } => {
