@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{z3_false, z3_float_to_sbv, z3_sbv_to_float};
-use z3::ast::{BV, Dynamic, Float};
+use z3::ast::{BV, Bool, Dynamic, Float};
 use z3::{Sort, ast::RoundingMode};
 
 use crate::Heap;
@@ -161,14 +161,17 @@ impl StackValue {
                 sym_lhs.bvslt(sym_rhs).ite(sym_lhs, sym_rhs),
             ),
             (StackValue::Float(lhs, sym_lhs), StackValue::Float(rhs, sym_rhs)) => {
-                StackValue::Float((*lhs).min(*rhs), sym_lhs.lt(sym_rhs).ite(sym_lhs, sym_rhs))
+                StackValue::Float(
+                    java_fmin(*lhs as f64, *rhs as f64) as f32,
+                    z3_java_fmin(sym_lhs, sym_rhs),
+                )
             }
             (StackValue::Long(lhs, sym_lhs), StackValue::Long(rhs, sym_rhs)) => StackValue::Long(
                 (*lhs).min(*rhs),
                 sym_lhs.bvslt(sym_rhs).ite(sym_lhs, sym_rhs),
             ),
             (StackValue::Double(lhs, sym_lhs), StackValue::Double(rhs, sym_rhs)) => {
-                StackValue::Double((*lhs).min(*rhs), sym_lhs.lt(sym_rhs).ite(sym_lhs, sym_rhs))
+                StackValue::Double(java_fmin(*lhs, *rhs), z3_java_fmin(sym_lhs, sym_rhs))
             }
             _ => panic!("Cannot perform min on these types!"),
         }
@@ -182,16 +185,19 @@ impl StackValue {
                 sym_lhs.bvsgt(sym_rhs).ite(sym_lhs, sym_rhs),
             ),
             (StackValue::Float(lhs, sym_lhs), StackValue::Float(rhs, sym_rhs)) => {
-                StackValue::Float((*lhs).max(*rhs), sym_lhs.gt(sym_rhs).ite(sym_lhs, sym_rhs))
+                StackValue::Float(
+                    java_fmax(*lhs as f64, *rhs as f64) as f32,
+                    z3_java_fmax(sym_lhs, sym_rhs),
+                )
             }
             (StackValue::Long(lhs, sym_lhs), StackValue::Long(rhs, sym_rhs)) => StackValue::Long(
                 (*lhs).max(*rhs),
                 sym_lhs.bvsgt(sym_rhs).ite(sym_lhs, sym_rhs),
             ),
             (StackValue::Double(lhs, sym_lhs), StackValue::Double(rhs, sym_rhs)) => {
-                StackValue::Double((*lhs).max(*rhs), sym_lhs.gt(sym_rhs).ite(sym_lhs, sym_rhs))
+                StackValue::Double(java_fmax(*lhs, *rhs), z3_java_fmax(sym_lhs, sym_rhs))
             }
-            _ => panic!("Cannot perform min on these types!"),
+            _ => panic!("Cannot perform max on these types!"),
         }
     }
 
@@ -226,6 +232,44 @@ impl StackValue {
             _ => false,
         }
     }
+}
+
+/// Java's `Math.min` on floating point values: NaN if either is NaN, and `-0.0 < 0.0`.
+fn java_fmin(a: f64, b: f64) -> f64 {
+    if a.is_nan() {
+        a
+    } else if a == 0.0 && b == 0.0 && b.is_sign_negative() {
+        b
+    } else if a <= b {
+        a
+    } else {
+        b
+    }
+}
+
+/// Java's `Math.max` on floating point values: NaN if either is NaN, and `-0.0 < 0.0`.
+fn java_fmax(a: f64, b: f64) -> f64 {
+    if a.is_nan() {
+        a
+    } else if a == 0.0 && b == 0.0 && a.is_sign_negative() {
+        b
+    } else if a >= b {
+        a
+    } else {
+        b
+    }
+}
+
+/// Symbolic [`java_fmin`].
+fn z3_java_fmin(a: &Float, b: &Float) -> Float {
+    let b_is_neg_zero = Bool::and(&[a.is_zero(), b.is_zero(), b.is_negative()]);
+    a.is_nan().ite(a, &b_is_neg_zero.ite(b, &a.le(b).ite(a, b)))
+}
+
+/// Symbolic [`java_fmax`].
+fn z3_java_fmax(a: &Float, b: &Float) -> Float {
+    let a_is_neg_zero = Bool::and(&[a.is_zero(), b.is_zero(), a.is_negative()]);
+    a.is_nan().ite(a, &a_is_neg_zero.ite(b, &a.ge(b).ite(a, b)))
 }
 
 #[derive(Clone, Debug, PartialEq)]
