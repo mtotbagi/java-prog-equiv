@@ -61,10 +61,10 @@ pub fn create_string(content: &str, symbolic: bool) -> HeapValue {
 pub fn abs(val: &StackValue) -> StackValue {
     match val {
         StackValue::Int(i, bv) => {
-            StackValue::Int(i.wrapping_abs(), bv.bvsgt(0).ite(&bv.bvneg(), bv))
+            StackValue::Int(i.wrapping_abs(), bv.bvslt(0).ite(&bv.bvneg(), bv))
         }
         StackValue::Long(i, bv) => {
-            StackValue::Long(i.wrapping_abs(), bv.bvsgt(0).ite(&bv.bvneg(), bv))
+            StackValue::Long(i.wrapping_abs(), bv.bvslt(0).ite(&bv.bvneg(), bv))
         }
         StackValue::Float(f, sym) => StackValue::Float(f.abs(), sym.unary_abs()),
         StackValue::Double(f, sym) => StackValue::Double(f.abs(), sym.unary_abs()),

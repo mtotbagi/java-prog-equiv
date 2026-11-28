@@ -99,7 +99,7 @@ impl StackValue {
                 ArrayValue::Short(*i as i16, bv.extract(15, 0))
             }
             (StackValue::Int(i, bv), ArrayType::Boolean) => {
-                ArrayValue::Boolean(*i != 0, bv.extract(1, 0))
+                ArrayValue::Boolean((*i & 1) != 0, bv.extract(0, 0))
             }
             (StackValue::Float(f, ast), ArrayType::Float) => ArrayValue::Float(*f, ast.clone()),
             (StackValue::Double(f, ast), ArrayType::Double) => ArrayValue::Double(*f, ast.clone()),
@@ -141,7 +141,7 @@ impl StackValue {
                 HeapValue::Short(*i as i16, bv.extract(15, 0))
             }
             (StackValue::Int(i, bv), SimpleType::Boolean) => {
-                HeapValue::Boolean(*i != 0, bv.extract(0, 0))
+                HeapValue::Boolean((*i & 1) != 0, bv.extract(0, 0))
             }
             (StackValue::Float(f, ast), SimpleType::Float) => HeapValue::Float(*f, ast.clone()),
             (StackValue::Double(f, ast), SimpleType::Double) => HeapValue::Double(*f, ast.clone()),

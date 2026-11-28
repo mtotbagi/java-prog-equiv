@@ -419,7 +419,7 @@ impl Interpreter {
                     _ => panic!("Invalid types"),
                 };
                 // Only add contraint if division can fail
-                let can_div0 = matches!(op, Op::Div | Op::Rem);
+                let can_div0 = matches!(op, Op::Div | Op::Rem) && matches!(ty, StackType::Int | StackType::Long);
                 let mut div0_priority: u32 = cur_frame.context_priority;
                 let mut next_priority: u32 = cur_frame.context_priority;
                 if let Some(ref cfgs) = self.cfgs {

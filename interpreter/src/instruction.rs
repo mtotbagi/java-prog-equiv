@@ -1,4 +1,4 @@
-use z3::ast::{BV, RoundingMode};
+use z3::ast::{BV, Bool, RoundingMode};
 
 use crate::{
     ArrayType, Constant, SimpleType,
@@ -217,13 +217,26 @@ impl Op {
     }
 
     pub fn op_z3_float(&self, lhs: &z3::ast::Float, rhs: &z3::ast::Float) -> z3::ast::Float {
-        let rm = RoundingMode::round_nearest_ties_to_away();
+        // Java rounds to nearest, ties to even
+        let rm = RoundingMode::round_nearest_ties_to_even();
         match self {
             Op::Add => lhs.add_with_rounding_mode(rhs, &rm),
             Op::Sub => lhs.sub_with_rounding_mode(rhs, &rm),
             Op::Mul => lhs.mul_with_rounding_mode(rhs, &rm),
             Op::Div => lhs.div_with_rounding_mode(rhs, &rm),
-            Op::Rem => lhs.rem(rhs),
+            Op::Rem => {
+                // Java's `%` truncates the quotient (like C's fmod), z3's IEEE remainder
+                // rounds it to nearest. They differ by |rhs| when the IEEE remainder's sign
+                // is not the sign of lhs, and the corrected value is exact.
+                let r = lhs.rem(rhs);
+                let abs = rhs.unary_abs();
+                let too_low = Bool::and(&[lhs.is_positive(), r.is_negative()]);
+                let too_high = Bool::and(&[lhs.is_negative(), r.is_positive()]);
+                too_low.ite(
+                    &r.add_with_rounding_mode(&abs, &rm),
+                    &too_high.ite(&r.sub_with_rounding_mode(&abs, &rm), &r),
+                )
+            }
         }
     }
 }

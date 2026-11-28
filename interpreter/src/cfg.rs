@@ -1,7 +1,7 @@
 use crate::{
     instruction::{Access, Instruction, Op},
     java_class::{Class, Method},
-    java_types::SimpleRef,
+    java_types::{SimpleRef, StackType},
 };
 
 // CFG = control flow graph
@@ -218,8 +218,9 @@ fn fill_method_cfg(
                     }
                 }
             }
-            Instruction::Binary { op, .. } => {
-                let can_div0 = matches!(op, Op::Div | Op::Rem);
+            Instruction::Binary { op, ty } => {
+                let can_div0 = matches!(op, Op::Div | Op::Rem)
+                    && matches!(ty, StackType::Int | StackType::Long);
                 if can_div0 {
                     res.nodes[offset].node_type =
                         CfgNodeType::Branch(offset + 1, res.nodes.len() - 1);
